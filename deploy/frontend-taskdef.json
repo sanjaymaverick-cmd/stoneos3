@@ -1,0 +1,27 @@
+{
+  "family": "stoneos-frontend",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "512",
+  "memory": "1024",
+  "executionRoleArn": "arn:aws:iam::REDACTED-AWS-ACCOUNT-ID:role/ecsTaskExecutionRole",
+  "containerDefinitions": [
+    {
+      "name": "stoneos-frontend",
+      "image": "REDACTED-AWS-ACCOUNT-ID.dkr.ecr.ap-south-1.amazonaws.com/stoneos-frontend:latest",
+      "portMappings": [{ "containerPort": 3000, "protocol": "tcp" }],
+      "environment": [
+        { "name": "HOSTNAME", "value": "0.0.0.0" },
+        { "name": "PORT", "value": "3000" }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/stoneos-frontend",
+          "awslogs-region": "ap-south-1",
+          "awslogs-stream-prefix": "ecs"
+        }
+      }
+    }
+  ]
+}

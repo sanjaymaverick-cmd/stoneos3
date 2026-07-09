@@ -1,0 +1,31 @@
+{
+  "family": "stoneos-backend",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "512",
+  "memory": "1024",
+  "executionRoleArn": "arn:aws:iam::REDACTED-AWS-ACCOUNT-ID:role/ecsTaskExecutionRole",
+  "containerDefinitions": [
+    {
+      "name": "stoneos-backend",
+      "image": "REDACTED-AWS-ACCOUNT-ID.dkr.ecr.ap-south-1.amazonaws.com/stoneos-backend:latest",
+      "portMappings": [{ "containerPort": 4000, "protocol": "tcp" }],
+      "environment": [
+        { "name": "PORT", "value": "4000" },
+        { "name": "FRONTEND_URL", "value": "http://stoneos-alb-337796168.ap-south-1.elb.amazonaws.com" }
+      ],
+      "secrets": [
+        { "name": "DATABASE_URL", "valueFrom": "arn:aws:ssm:ap-south-1:REDACTED-AWS-ACCOUNT-ID:parameter/stoneos/database-url" },
+        { "name": "CLERK_SECRET_KEY", "valueFrom": "arn:aws:ssm:ap-south-1:REDACTED-AWS-ACCOUNT-ID:parameter/stoneos/clerk-secret-key" }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/stoneos-backend",
+          "awslogs-region": "ap-south-1",
+          "awslogs-stream-prefix": "ecs"
+        }
+      }
+    }
+  ]
+}
