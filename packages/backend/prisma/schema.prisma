@@ -1,0 +1,637 @@
+// StoneOS MVP schema — Prisma translation of stoneos-mvp-schema.sql
+// Keep this file and the raw DDL in sync manually until we're confident
+// enough in the model to let Prisma own migrations outright.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  owner
+  manager
+  supervisor
+  operator
+  accountant
+  auditor
+  admin
+}
+
+enum PaymentType {
+  invoiced
+  cash
+  mixed
+}
+
+model Factory {
+  id        String   @id @default(uuid())
+  name      String
+  location  String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  users            AppUser[]
+  suppliers        Supplier[]
+  customers        Customer[]
+  machines         Machine[]
+  vehicles         Vehicle[]
+  rawBlocks        RawBlock[]
+  slabs            Slab[]
+  dprs             DailyProductionReport[]
+  consumables      Consumable[]
+  salesOrders      SalesOrder[]
+  invoices         Invoice[]
+  expenses         Expense[]
+  tallyBatches     TallyImportBatch[]
+  inventorySnaps   InventorySnapshot[]
+  utilityReadings  UtilityReading[]
+  dailySalesSummaries DailySalesSummary[]
+
+  @@map("factory")
+}
+
+model AppUser {
+  id        String   @id @default(uuid())
+  factoryId String   @map("factory_id")
+  factory   Factory  @relation(fields: [factoryId], references: [id])
+  name      String
+  email     String   @unique
+  role      UserRole
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("app_user")
+}
+
+model Supplier {
+  id          String   @id @default(uuid())
+  factoryId   String   @map("factory_id")
+  factory     Factory  @relation(fields: [factoryId], references: [id])
+  name        String
+  contactInfo String?  @map("contact_info")
+  createdAt   DateTime @default(now()) @map("created_at")
+  rawBlocks   RawBlock[]
+
+  @@map("supplier")
+}
+
+model Customer {
+  id          String   @id @default(uuid())
+  factoryId   String   @map("factory_id")
+  factory     Factory  @relation(fields: [factoryId], references: [id])
+  name        String
+  contactInfo String?  @map("contact_info")
+  creditLimit Decimal? @map("credit_limit") @db.Decimal(14, 2)
+  createdAt   DateTime @default(now()) @map("created_at")
+  salesOrders SalesOrder[]
+  invoices    Invoice[]
+
+  @@map("customer")
+}
+
+model Machine {
+  id             String   @id @default(uuid())
+  factoryId      String   @map("factory_id")
+  factory        Factory  @relation(fields: [factoryId], references: [id])
+  name           String                        // e.g. "B-21", "LPM"
+  machineType    String   @map("machine_type")  // cutting / polishing
+  bladeCount     Int?     @map("blade_count")   // B-21: 21 blades
+  headCount      Int?     @map("head_count")    // LPM: 16 polishing heads
+  abrasivesPerHead Int?   @map("abrasives_per_head") // LPM: 6 bricks/head -> full change-out = headCount * abrasivesPerHead
+  installedDate  DateTime? @map("installed_date") @db.Date
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  runtimeLogs        MachineRuntimeLog[]
+  blockTransitions    BlockStateTransition[]
+  slabTransitions     SlabStateTransition[]
+  consumableUsageLogs ConsumableUsageLog[]
+  cuttingSessions     CuttingSession[]
+  polishingSessions   PolishingSession[]
+
+  @@map("machine")
+}
+
+// ============================================================
+// BLOCK-CENTRIC PRODUCTION (the real workflow)
+// A block is allocated to B-21, cut over one or more operational days,
+// and its slabs then move to LPM for polishing. Daily DPR numbers are
+// DERIVED from these sessions — never entered as free-floating aggregates.
+//
+// OPERATIONAL DAY = 7am to 7am. operationalDate on a day log is the date
+// of the 7am report that covers it (e.g. work from Jan 5 7:00 to Jan 6
+// 6:59 belongs to operationalDate Jan 5).
+// ============================================================
+
+model CuttingSession {
+  id             String    @id @default(uuid())
+  factoryId      String    @map("factory_id")
+  rawBlockId     String    @map("raw_block_id")
+  rawBlock       RawBlock  @relation(fields: [rawBlockId], references: [id])
+  machineId      String    @map("machine_id") // the B-21
+  machine        Machine   @relation(fields: [machineId], references: [id])
+  startedAt      DateTime  @map("started_at")
+  endedAt        DateTime? @map("ended_at")   // null while block is still on the machine
+  status         String    @default("in_progress") // in_progress / completed / aborted
+  expectedSlabCount  Int?  @map("expected_slab_count") // OPTIONAL — a pre-estimate for
+                                                        // planning only, not required to start.
+                                                        // The real numbers come in at completion.
+  totalSlabsCut      Int?  @map("total_slabs_cut")      // actual physical count off the saw,
+                                                         // entered at completion — includes damaged
+  finalGoodSlabCount Int?  @map("final_good_slab_count") // after inspection — this many become
+                                                          // real Slab inventory rows
+  damagedSlabCount   Int?  @map("damaged_slab_count")    // = totalSlabsCut - finalGoodSlabCount.
+                                                          // Never enters inventory. For cost analysis:
+                                                          // value at raw block cost allocation, NOT
+                                                          // finished slab price — it was destroyed
+                                                          // before polishing/finishing added any value.
+  wastageNotes   String?   @map("wastage_notes")
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  dayLogs         CuttingDayLog[]
+  registeredSlabs Slab[]
+
+  @@map("cutting_session")
+}
+
+model CuttingDayLog {
+  id                  String         @id @default(uuid())
+  cuttingSessionId    String         @map("cutting_session_id")
+  session             CuttingSession @relation(fields: [cuttingSessionId], references: [id])
+  operationalDate     DateTime       @map("operational_date") @db.Date // 7am-to-7am day
+  runtimeHours        Decimal?       @map("runtime_hours") @db.Decimal(4, 2) // typically 19-22
+  powerCutMinutes     Int?           @map("power_cut_minutes")
+  downtimeMinutes     Int?           @map("downtime_minutes")
+  downtimeReason      String?        @map("downtime_reason") // power_cut / maintenance / breaks / other
+  powerConsumptionKwh Decimal?       @map("power_consumption_kwh") @db.Decimal(10, 2)
+  slabsProducedCount  Int?           @map("slabs_produced_count")
+  operatorId          String?        @map("operator_id")
+  notes               String?
+  createdAt           DateTime       @default(now()) @map("created_at")
+
+  @@unique([cuttingSessionId, operationalDate])
+  @@map("cutting_day_log")
+}
+
+// LPM polishing: slabs (from a completed or in-progress cutting session)
+// are polished glossy or leather. One session = one day's LPM run on a
+// batch of slabs; simpler than cutting since slabs don't span days.
+// LPM polishing: slabs are processed as a uniform automated batch — the
+// machine's pre-entered parameters and liner assembly can't handle a
+// rough slab significantly smaller than the rest of the batch, which is
+// why undersized/broken pieces get excluded BEFORE reaching LPM (see
+// CuttingSession.damagedSlabCount). Once a slab enters and clears a
+// polishing session, business rule is: it is ALWAYS sellable, even if a
+// stone-surface defect is discovered during or after polishing (defects
+// are often invisible until polished). Never add a rejection/QC-exclude
+// step here — pricing/grading for a found defect belongs on
+// Slab.qualityNote, not on inventory eligibility.
+model PolishingSession {
+  id                  String    @id @default(uuid())
+  factoryId           String    @map("factory_id")
+  machineId           String    @map("machine_id") // the LPM
+  machine             Machine   @relation(fields: [machineId], references: [id])
+  operationalDate     DateTime  @map("operational_date") @db.Date
+  finishType          String    @map("finish_type") // glossy / leather
+  slabsPolishedCount  Int?      @map("slabs_polished_count")
+  runtimeHours        Decimal?  @map("runtime_hours") @db.Decimal(4, 2)
+  powerConsumptionKwh Decimal?  @map("power_consumption_kwh") @db.Decimal(10, 2)
+  downtimeMinutes     Int?      @map("downtime_minutes")
+  downtimeReason      String?   @map("downtime_reason")
+  operatorId          String?   @map("operator_id")
+  notes               String?
+  createdAt           DateTime  @default(now()) @map("created_at")
+
+  slabs  PolishingSessionSlab[]
+
+  @@map("polishing_session")
+}
+
+// Which specific slabs went through a polishing session — keeps the
+// block→slab→finish trace intact instead of only counting totals.
+model PolishingSessionSlab {
+  id                  String           @id @default(uuid())
+  polishingSessionId  String           @map("polishing_session_id")
+  session             PolishingSession @relation(fields: [polishingSessionId], references: [id])
+  slabId              String           @map("slab_id")
+  slab                Slab             @relation(fields: [slabId], references: [id])
+
+  @@unique([polishingSessionId, slabId])
+  @@map("polishing_session_slab")
+}
+
+model Vehicle {
+  id            String    @id @default(uuid())
+  factoryId     String    @map("factory_id")
+  factory       Factory   @relation(fields: [factoryId], references: [id])
+  name          String    // e.g. "Nexon", "Isuzu", "EV" — changes over time
+  vehicleType   String?   @map("vehicle_type")
+  purchaseDate  DateTime? @map("purchase_date") @db.Date
+  retiredDate   DateTime? @map("retired_date") @db.Date
+  active        Boolean   @default(true)
+  createdAt     DateTime  @default(now()) @map("created_at")
+  expenses      Expense[]
+
+  @@map("vehicle")
+}
+
+// RECOVERY RATIO (documented for later reporting, not yet built as a
+// live report): actual sqft sold (sum of SalesLineItem.quantity across
+// all slabs where parentBlockId = this block) divided by weightTons.
+// Benchmark: 105 sqft per ton of rough block. Below 105 = below-target
+// yield; above 105 = good efficiency. Must use SALE-TIME sqft only —
+// never Slab.lengthFt/widthFt, which are provisional production-stage
+// placeholders, not the real measurement.
+model RawBlock {
+  id                 String   @id @default(uuid())
+  factoryId          String   @map("factory_id")
+  factory            Factory  @relation(fields: [factoryId], references: [id])
+  serialNumber       String   @map("serial_number")
+  varietyName        String   @map("variety_name")
+  supplierId         String?  @map("supplier_id")
+  supplier           Supplier? @relation(fields: [supplierId], references: [id])
+  weightTons         Decimal? @map("weight_tons") @db.Decimal(10, 3)
+  purchaseDate       DateTime? @map("purchase_date") @db.Date
+  invoicedAmount     Decimal? @map("invoiced_amount") @db.Decimal(14, 2)
+  actualAmountPaid   Decimal? @map("actual_amount_paid") @db.Decimal(14, 2)
+  gstRate            Decimal  @default(5.00) @map("gst_rate") @db.Decimal(5, 2)
+  currentStatus      String   @default("in_stock") @map("current_status")
+  currentLocation    String?  @map("current_location")
+  createdAt          DateTime @default(now()) @map("created_at")
+
+  photos       RawBlockPhoto[]
+  transitions  BlockStateTransition[]
+  slabs        Slab[]
+  allocations  ExpenseAllocation[]
+  cuttingSessions CuttingSession[]
+
+  @@unique([factoryId, serialNumber])
+  @@map("raw_block")
+}
+
+model RawBlockPhoto {
+  id          String   @id @default(uuid())
+  rawBlockId  String   @map("raw_block_id")
+  rawBlock    RawBlock @relation(fields: [rawBlockId], references: [id])
+  url         String
+  uploadedAt  DateTime @default(now()) @map("uploaded_at")
+
+  @@map("raw_block_photo")
+}
+
+// Append-only — never update or delete rows via the API layer.
+model BlockStateTransition {
+  id          String    @id @default(uuid())
+  rawBlockId  String    @map("raw_block_id")
+  rawBlock    RawBlock  @relation(fields: [rawBlockId], references: [id])
+  fromState   String?   @map("from_state")
+  toState     String    @map("to_state")
+  machineId   String?   @map("machine_id")
+  machine     Machine?  @relation(fields: [machineId], references: [id])
+  userId      String?   @map("user_id")
+  notes       String?
+  occurredAt  DateTime  @default(now()) @map("occurred_at")
+
+  @@map("block_state_transition")
+}
+
+model Slab {
+  id               String   @id @default(uuid())
+  factoryId        String   @map("factory_id")
+  factory          Factory  @relation(fields: [factoryId], references: [id])
+  parentBlockId    String   @map("parent_block_id") // permanent, never reassigned
+  parentBlock      RawBlock @relation(fields: [parentBlockId], references: [id])
+  cuttingSessionId String?  @map("cutting_session_id") // which B-21 session produced it
+  cuttingSession   CuttingSession? @relation(fields: [cuttingSessionId], references: [id])
+  slabSerial       String   @map("slab_serial")
+  varietyName      String   @map("variety_name")
+  thicknessMm      Decimal  @default(18.0) @map("thickness_mm") @db.Decimal(5, 2)
+  // PROVISIONAL ONLY — set once per block at cutting completion (~85% rough
+  // estimate), for WIP/yard tracking. NOT the authoritative area. The real
+  // measurement happens exactly once, at time of sale — see
+  // SalesLineItem.quantity, which is the true sqft figure. Recovery ratio
+  // (target: 105 sqft per ton of rough block) must be computed from actual
+  // sold sqft, never from these fields — measuring three times (cut, polish,
+  // sale) is wasted effort when only the sale-time number is real.
+  lengthFt         Decimal? @map("length_ft") @db.Decimal(6, 2)
+  widthFt          Decimal? @map("width_ft") @db.Decimal(6, 2)
+  // areaSqft is a generated column in Postgres (length_ft * width_ft) — not writable via Prisma.
+  finish           String?
+  // Optional, informational only. Internal stone defects are often only
+  // visible after polishing — but per business rule, a slab that clears
+  // cutting and enters LPM is ALWAYS sellable once polished, regardless of
+  // any defect found during or after polishing (LPM's automated batch/liner
+  // assembly can't selectively exclude mid-batch anyway). This field is for
+  // pricing/grading notes only — it must never gate salesStatus or exclude
+  // a slab from inventory. Do not add post-polish rejection logic.
+  qualityNote      String?  @map("quality_note")
+  currentLocation  String?  @map("current_location")
+  salesStatus      String   @default("in_stock") @map("sales_status")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  photos       SlabPhoto[]
+  transitions  SlabStateTransition[]
+  salesLines   SalesLineItem[]
+  polishingSessionSlabs PolishingSessionSlab[]
+
+  @@unique([factoryId, slabSerial])
+  @@map("slab")
+}
+
+model SlabPhoto {
+  id         String   @id @default(uuid())
+  slabId     String   @map("slab_id")
+  slab       Slab     @relation(fields: [slabId], references: [id])
+  url        String
+  uploadedAt DateTime @default(now()) @map("uploaded_at")
+
+  @@map("slab_photo")
+}
+
+// Append-only.
+model SlabStateTransition {
+  id          String   @id @default(uuid())
+  slabId      String   @map("slab_id")
+  slab        Slab     @relation(fields: [slabId], references: [id])
+  fromState   String?  @map("from_state")
+  toState     String   @map("to_state")
+  machineId   String?  @map("machine_id")
+  machine     Machine? @relation(fields: [machineId], references: [id])
+  userId      String?  @map("user_id")
+  notes       String?
+  occurredAt  DateTime @default(now()) @map("occurred_at")
+
+  @@map("slab_state_transition")
+}
+
+model MachineRuntimeLog {
+  id                   String   @id @default(uuid())
+  machineId            String   @map("machine_id")
+  machine              Machine  @relation(fields: [machineId], references: [id])
+  logDate              DateTime @map("log_date") @db.Date
+  runtimeMinutes       Int?     @map("runtime_minutes")
+  downtimeMinutes      Int?     @map("downtime_minutes")
+  downtimeReason        String?  @map("downtime_reason")
+  operatorId            String?  @map("operator_id")
+  powerConsumptionKwh    Decimal? @map("power_consumption_kwh") @db.Decimal(10, 2)
+  bladeOrHeadUsage       String?  @map("blade_or_head_usage")
+  createdAt              DateTime @default(now()) @map("created_at")
+
+  @@unique([machineId, logDate])
+  @@map("machine_runtime_log")
+}
+
+// Mostly DERIVED from block/slab transitions + machine runtime — manual
+// fields are for what the system can't observe automatically.
+model DailyProductionReport {
+  id                      String   @id @default(uuid())
+  factoryId               String   @map("factory_id")
+  factory                 Factory  @relation(fields: [factoryId], references: [id])
+  reportDate              DateTime @map("report_date") @db.Date
+  department              String   // gangsaw / polishing / cutting
+  productionQty            Decimal? @map("production_qty") @db.Decimal(10, 2)
+  productionValue           Decimal? @map("production_value") @db.Decimal(14, 2)
+  machineUtilisationPct     Decimal? @map("machine_utilisation_pct") @db.Decimal(5, 2)
+  recoveryPct               Decimal? @map("recovery_pct") @db.Decimal(5, 2)
+  rejectionPct              Decimal? @map("rejection_pct") @db.Decimal(5, 2)
+  reworkPct                 Decimal? @map("rework_pct") @db.Decimal(5, 2)
+  downtimeMinutes           Int?     @map("downtime_minutes")
+  labourHours               Decimal? @map("labour_hours") @db.Decimal(8, 2)
+  labourHeadcount           Int?     @map("labour_headcount")
+  rawBlockConsumption       Decimal? @map("raw_block_consumption") @db.Decimal(10, 3)
+  finishedSlabCount         Int?     @map("finished_slab_count")
+  dispatchQty               Decimal? @map("dispatch_qty") @db.Decimal(10, 2)
+  isDerived                 Boolean  @default(true) @map("is_derived")
+  manualNotes               String?  @map("manual_notes")
+  createdAt                 DateTime @default(now()) @map("created_at")
+
+  @@unique([factoryId, reportDate, department])
+  @@map("daily_production_report")
+}
+
+model Consumable {
+  id          String   @id @default(uuid())
+  factoryId   String   @map("factory_id")
+  factory     Factory  @relation(fields: [factoryId], references: [id])
+  name        String   // epoxy, abrasives, rollers, cotton, chemicals
+  unit        String?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  purchases  ConsumablePurchase[]
+  usageLogs  ConsumableUsageLog[]
+
+  @@map("consumable")
+}
+
+model ConsumablePurchase {
+  id                 String     @id @default(uuid())
+  consumableId       String     @map("consumable_id")
+  consumable         Consumable @relation(fields: [consumableId], references: [id])
+  quantity           Decimal?   @db.Decimal(10, 2)
+  invoicedAmount     Decimal?   @map("invoiced_amount") @db.Decimal(14, 2)
+  actualAmountPaid   Decimal?   @map("actual_amount_paid") @db.Decimal(14, 2) // = invoiced by convention, 100% billed
+  purchaseDate       DateTime?  @map("purchase_date") @db.Date
+  createdAt          DateTime   @default(now()) @map("created_at")
+
+  @@map("consumable_purchase")
+}
+
+model ConsumableUsageLog {
+  id            String     @id @default(uuid())
+  consumableId  String     @map("consumable_id")
+  consumable    Consumable @relation(fields: [consumableId], references: [id])
+  machineId     String?    @map("machine_id")
+  machine       Machine?   @relation(fields: [machineId], references: [id])
+  quantityUsed  Decimal?   @map("quantity_used") @db.Decimal(10, 2)
+  usageDate     DateTime?  @map("usage_date") @db.Date
+  createdAt     DateTime   @default(now()) @map("created_at")
+
+  @@map("consumable_usage_log")
+}
+
+model Invoice {
+  id              String   @id @default(uuid())
+  factoryId       String   @map("factory_id")
+  factory         Factory  @relation(fields: [factoryId], references: [id])
+  customerId      String   @map("customer_id")
+  customer        Customer @relation(fields: [customerId], references: [id])
+  invoiceNumber   String   @map("invoice_number")
+  invoiceDate     DateTime @map("invoice_date") @db.Date
+  invoicedAmount  Decimal  @map("invoiced_amount") @db.Decimal(14, 2)
+  gstAmount       Decimal  @default(0) @map("gst_amount") @db.Decimal(12, 2)
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  payments     Payment[]
+  salesOrders  SalesOrder[]
+
+  @@unique([factoryId, invoiceNumber])
+  @@map("invoice")
+}
+
+model Payment {
+  id            String    @id @default(uuid())
+  invoiceId     String?   @map("invoice_id")
+  invoice       Invoice?  @relation(fields: [invoiceId], references: [id])
+  amount        Decimal   @db.Decimal(14, 2)
+  paymentMode   String?   @map("payment_mode") // bank / cash / cheque / upi
+  paymentDate   DateTime  @map("payment_date") @db.Date
+  createdAt     DateTime  @default(now()) @map("created_at")
+
+  @@map("payment")
+}
+
+model SalesOrder {
+  id          String   @id @default(uuid())
+  factoryId   String   @map("factory_id")
+  factory     Factory  @relation(fields: [factoryId], references: [id])
+  customerId  String   @map("customer_id")
+  customer    Customer @relation(fields: [customerId], references: [id])
+  orderDate   DateTime @map("order_date") @db.Date
+  invoiceId   String?  @map("invoice_id")
+  invoice     Invoice? @relation(fields: [invoiceId], references: [id])
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  lineItems  SalesLineItem[]
+
+  @@map("sales_order")
+}
+
+model SalesLineItem {
+  id                     String      @id @default(uuid())
+  salesOrderId           String      @map("sales_order_id")
+  salesOrder             SalesOrder  @relation(fields: [salesOrderId], references: [id])
+  slabId                 String?     @map("slab_id")
+  slab                   Slab?       @relation(fields: [slabId], references: [id])
+  varietyName            String      @map("variety_name")
+  quantity               Decimal     @db.Decimal(10, 2)
+  unitPrice              Decimal     @map("unit_price") @db.Decimal(12, 2)
+  // subtotal is a generated column (quantity * unit_price) in Postgres.
+  gstAmount              Decimal     @default(0) @map("gst_amount") @db.Decimal(12, 2)
+  loadingCharge          Decimal     @default(0) @map("loading_charge") @db.Decimal(12, 2)
+  transportCharge        Decimal     @default(0) @map("transport_charge") @db.Decimal(12, 2)
+  invoicedAmount         Decimal?    @map("invoiced_amount") @db.Decimal(14, 2)
+  actualAmountReceived   Decimal?    @map("actual_amount_received") @db.Decimal(14, 2)
+  paymentType            PaymentType @map("payment_type")
+  createdAt              DateTime    @default(now()) @map("created_at")
+
+  @@map("sales_line_item")
+}
+
+// Historical backfill target (only daily totals exist pre-launch) and,
+// going forward, a DERIVED rollup of sales_line_item — same pattern as DPR.
+model DailySalesSummary {
+  id                      String   @id @default(uuid())
+  factoryId               String   @map("factory_id")
+  factory                 Factory  @relation(fields: [factoryId], references: [id])
+  summaryDate             DateTime @map("summary_date") @db.Date
+  totalQtySqft            Decimal? @map("total_qty_sqft") @db.Decimal(12, 2)
+  invoicedAmount          Decimal? @map("invoiced_amount") @db.Decimal(14, 2)
+  actualAmountReceived    Decimal? @map("actual_amount_received") @db.Decimal(14, 2)
+  isDerived               Boolean  @default(false) @map("is_derived") // false = historical backfill row
+  createdAt               DateTime @default(now()) @map("created_at")
+
+  @@unique([factoryId, summaryDate])
+  @@map("daily_sales_summary")
+}
+
+model Expense {
+  id            String    @id @default(uuid())
+  factoryId     String    @map("factory_id")
+  factory       Factory   @relation(fields: [factoryId], references: [id])
+  category      String    // see EXPENSE_CATEGORIES in frontend — real categories, not generic ERP defaults
+  vehicleId     String?   @map("vehicle_id")
+  vehicle       Vehicle?  @relation(fields: [vehicleId], references: [id])
+  amount        Decimal   @db.Decimal(14, 2)
+  toWhom        String?   @map("to_whom")
+  expenseDate   DateTime  @map("expense_date") @db.Date
+  createdAt     DateTime  @default(now()) @map("created_at")
+
+  allocations  ExpenseAllocation[]
+
+  @@map("expense")
+}
+
+model ExpenseAllocation {
+  id                String   @id @default(uuid())
+  expenseId         String   @map("expense_id")
+  expense           Expense  @relation(fields: [expenseId], references: [id])
+  rawBlockId        String?  @map("raw_block_id")
+  rawBlock          RawBlock? @relation(fields: [rawBlockId], references: [id])
+  allocatedAmount   Decimal  @map("allocated_amount") @db.Decimal(14, 2)
+  allocationMethod  String?  @map("allocation_method") // 'by_weight' | 'by_area' | 'manual'
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  @@map("expense_allocation")
+}
+
+model TallyImportBatch {
+  id           String    @id @default(uuid())
+  factoryId    String    @map("factory_id")
+  factory      Factory   @relation(fields: [factoryId], references: [id])
+  sourceFile   String?   @map("source_file")
+  importDate   DateTime  @default(now()) @map("import_date")
+  periodStart  DateTime? @map("period_start") @db.Date
+  periodEnd    DateTime? @map("period_end") @db.Date
+
+  ledgerEntries      TallyLedgerEntry[]
+  trialBalanceRows   TallyTrialBalanceSnapshot[]
+
+  @@map("tally_import_batch")
+}
+
+model TallyLedgerEntry {
+  id                    String            @id @default(uuid())
+  tallyImportBatchId    String            @map("tally_import_batch_id")
+  batch                 TallyImportBatch  @relation(fields: [tallyImportBatchId], references: [id])
+  voucherType           String?           @map("voucher_type")
+  entryDate             DateTime?         @map("entry_date") @db.Date
+  account               String?
+  debit                 Decimal?          @db.Decimal(14, 2)
+  credit                Decimal?          @db.Decimal(14, 2)
+  narration             String?
+
+  @@map("tally_ledger_entry")
+}
+
+model TallyTrialBalanceSnapshot {
+  id                   String            @id @default(uuid())
+  tallyImportBatchId   String            @map("tally_import_batch_id")
+  batch                TallyImportBatch  @relation(fields: [tallyImportBatchId], references: [id])
+  account              String?
+  debit                Decimal?          @db.Decimal(14, 2)
+  credit               Decimal?          @db.Decimal(14, 2)
+
+  @@map("tally_trial_balance_snapshot")
+}
+
+model InventorySnapshot {
+  id                        String   @id @default(uuid())
+  factoryId                 String   @map("factory_id")
+  factory                   Factory  @relation(fields: [factoryId], references: [id])
+  snapshotDate              DateTime @map("snapshot_date") @db.Date
+  itemType                  String   @map("item_type") // raw_block / slab / consumable
+  quantityOnHand            Decimal? @map("quantity_on_hand") @db.Decimal(12, 2)
+  valueOnHand               Decimal? @map("value_on_hand") @db.Decimal(14, 2)
+  daysSinceLastMovement     Int?     @map("days_since_last_movement")
+  createdAt                 DateTime @default(now()) @map("created_at")
+
+  @@unique([factoryId, snapshotDate, itemType])
+  @@map("inventory_snapshot")
+}
+
+model UtilityReading {
+  id                         String   @id @default(uuid())
+  factoryId                  String   @map("factory_id")
+  factory                    Factory  @relation(fields: [factoryId], references: [id])
+  readingDate                DateTime @map("reading_date") @db.Date
+  solarGenerationKwh         Decimal? @map("solar_generation_kwh") @db.Decimal(10, 2)
+  gridExportKwh              Decimal? @map("grid_export_kwh") @db.Decimal(10, 2)
+  gridImportKwh              Decimal? @map("grid_import_kwh") @db.Decimal(10, 2)
+  machineConsumptionKwh      Decimal? @map("machine_consumption_kwh") @db.Decimal(10, 2)
+  powerCutMinutes            Int?     @map("power_cut_minutes")
+  createdAt                  DateTime @default(now()) @map("created_at")
+
+  @@map("utility_reading")
+}

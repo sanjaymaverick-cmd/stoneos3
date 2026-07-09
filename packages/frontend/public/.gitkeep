@@ -1,0 +1,1 @@
+placeholder — StoneOS has no static assets yet, this keeps the Dockerfile's public/ copy step from failing on an empty/missing dir

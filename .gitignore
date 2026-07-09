@@ -1,0 +1,27 @@
+# dependencies
+node_modules/
+
+# env files (never commit secrets)
+.env
+.env.*
+!.env.example
+
+# build output
+dist/
+.next/
+out/
+
+# logs
+npm-debug.log*
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# editor
+.vscode/
+.idea/
+
+# local Claude Code config (per-developer)
+.claude/settings.local.json

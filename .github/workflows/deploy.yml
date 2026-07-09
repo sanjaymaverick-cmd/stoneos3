@@ -1,0 +1,52 @@
+name: Deploy StoneOS
+
+on:
+  push:
+    branches: [main]
+
+env:
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push backend
+        env:
+          REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+        run: |
+          docker build -t $REGISTRY/stoneos-backend:${{ github.sha }} -t $REGISTRY/stoneos-backend:latest ./packages/backend
+          docker push $REGISTRY/stoneos-backend:${{ github.sha }}
+          docker push $REGISTRY/stoneos-backend:latest
+
+      - name: Build and push frontend
+        env:
+          REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+        run: |
+          docker build \
+            --build-arg NEXT_PUBLIC_API_URL=${{ secrets.NEXT_PUBLIC_API_URL }} \
+            --build-arg NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }} \
+            -t $REGISTRY/stoneos-frontend:${{ github.sha }} -t $REGISTRY/stoneos-frontend:latest ./packages/frontend
+          docker push $REGISTRY/stoneos-frontend:${{ github.sha }}
+          docker push $REGISTRY/stoneos-frontend:latest
+
+      # App Runner auto-redeploys on new "latest" pushes ONLY if the
+      # service was created with auto-deployments enabled. If not,
+      # uncomment below (needs the App Runner service ARNs as secrets).
+      # - name: Trigger App Runner redeploy (backend)
+      #   run: aws apprunner start-deployment --service-arn ${{ secrets.APPRUNNER_BACKEND_ARN }}
+      # - name: Trigger App Runner redeploy (frontend)
+      #   run: aws apprunner start-deployment --service-arn ${{ secrets.APPRUNNER_FRONTEND_ARN }}

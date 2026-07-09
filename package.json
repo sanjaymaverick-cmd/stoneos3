@@ -1,0 +1,21 @@
+{
+  "name": "stoneos",
+  "private": true,
+  "workspaces": [
+    "packages/backend",
+    "packages/frontend"
+  ],
+  "scripts": {
+    "dev:backend": "npm run start:dev --workspace=packages/backend",
+    "dev:frontend": "npm run dev --workspace=packages/frontend",
+    "db:migrate": "npm run prisma:migrate --workspace=packages/backend",
+    "db:studio": "npm run prisma:studio --workspace=packages/backend"
+  },
+  "allowScripts": {
+    "prisma@5.22.0": true,
+    "sharp@0.34.5": true,
+    "@nestjs/core@10.4.22": true,
+    "@prisma/client@5.22.0": true,
+    "@prisma/engines@5.22.0": true
+  }
+}
