@@ -1,5 +1,13 @@
 # Deploying StoneOS to AWS
 
+> ⚠️ **SUPERSEDED — reference only.** This was the original **App Runner**
+> plan. App Runner turned out to be unavailable on the target account
+> (`SubscriptionRequiredException`), so StoneOS is actually deployed on
+> **ECS Fargate + ALB**. For the as-built infrastructure, CI/CD, and the
+> live URLs, see [`deploy/README.md`](deploy/README.md). This file is kept
+> only as a record of the alternative approach and its RDS/ECR steps, which
+> are still broadly accurate.
+
 Assumes: AWS CLI v2 configured (`aws configure`), Docker installed, and
 you're logged into an AWS account with permission to create RDS/ECR/App
 Runner/IAM resources. Replace `<...>` placeholders with your real values.

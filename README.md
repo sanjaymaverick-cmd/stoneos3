@@ -1,8 +1,17 @@
 # StoneOS — Vedam Granites Pilot
 
 Modular monolith. NestJS backend + Next.js frontend, PostgreSQL via Prisma,
-Clerk for auth, targeting AWS (RDS + App Runner/ECS + S3 + Amplify or
-CloudFront) for hosting.
+Clerk for auth. **Live on AWS** (RDS + ECS Fargate behind an ALB), deployed
+continuously from `main` via GitHub Actions.
+
+| | |
+|---|---|
+| **Frontend** | http://stoneos-alb-337796168.ap-south-1.elb.amazonaws.com |
+| **Backend API** | http://stoneos-alb-337796168.ap-south-1.elb.amazonaws.com:8080 |
+| **Infra docs** | [`deploy/README.md`](deploy/README.md) — as-built architecture, resources, CI/CD |
+
+> HTTP only for now (AWS-generated hostname). HTTPS + a custom domain, and
+> swapping Clerk dev keys for live keys, are the remaining hardening steps.
 
 ## Structure
 
@@ -14,8 +23,12 @@ packages/frontend        Next.js app (standalone output for Docker)
 docker-compose.yml        Local Postgres for DEVELOPMENT (npm run dev:*)
 docker-compose.prod.yml   Smoke-test the actual production images locally
                           before pushing to AWS
-AWS-DEPLOYMENT.md         Step-by-step deployment guide (RDS, ECR, App Runner)
-.github/workflows/deploy.yml   CI — builds + pushes images on push to main
+deploy/                   AS-BUILT AWS infra — task definitions, IAM policies,
+                          architecture README (what is actually deployed)
+AWS-DEPLOYMENT.md         SUPERSEDED App Runner plan — kept for reference only;
+                          see deploy/README.md for the real ECS Fargate setup
+.github/workflows/deploy.yml   CI/CD — builds + pushes images and redeploys both
+                          ECS services on push to main (AWS auth via GitHub OIDC)
 stoneos-mvp-schema.sql   Reference DDL (source of truth for the data model —
                          keep schema.prisma in sync with this manually for now)
 ```
@@ -34,6 +47,39 @@ npm run dev:frontend          # http://localhost:3000
 
 You'll need a Clerk account (clerk.com) for `CLERK_SECRET_KEY` and
 `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` — free tier is enough for development.
+The app uses **Clerk Core 3** (`@clerk/nextjs` v7 on the frontend,
+`@clerk/backend` v3 on the backend). Sign-in/sign-up live at `/sign-in`
+and `/sign-up`; a client-side `AuthGate` redirects unauthenticated users.
+
+## Deployment
+
+Live on **AWS ECS Fargate** behind an Application Load Balancer, with a
+private **RDS PostgreSQL** database, in `ap-south-1`. Runtime secrets are
+in SSM Parameter Store (never in images or git). Push to `main` triggers
+GitHub Actions, which builds+pushes both images to ECR and force-deploys
+both ECS services — AWS auth is via **GitHub OIDC**, so no long-lived AWS
+keys are stored in GitHub.
+
+```
+                       Internet
+                          │
+              ┌───────────┴───────────┐
+              │   ALB (stoneos-alb)   │
+              │  :80   → frontend     │
+              │  :8080 → backend API  │
+              └───────┬───────┬───────┘
+           frontend svc│       │backend svc      ECS Fargate
+              (Next.js)│       │(NestJS)         (stoneos-cluster)
+              :3000    │       │:4000
+                               │ 5432
+                         ┌─────▼──────┐
+                         │  RDS PG 16 │  stoneos-db (private)
+                         └────────────┘
+```
+
+Full resource inventory, security groups, IAM, and the migration/bootstrap
+runbook are in [`deploy/README.md`](deploy/README.md). Local production-image
+smoke test: `docker compose -f docker-compose.prod.yml up --build`.
 
 ## What's built vs. stubbed
 
@@ -72,10 +118,10 @@ the codebase — if you add one, you've broken tenant isolation.
 5. Per-slab dimension overrides for the rare mixed-size batch — completion currently assumes uniform size (true ~99% of the time).
 6. Item-level Tally detail (sqft per sales line) — not imported yet, would enable a direct cross-check against `sales_line_item`.
 
-**Get to a real deployment — READY TO EXECUTE, see `AWS-DEPLOYMENT.md`:**
+**Get to a real deployment — DONE, now LIVE (see `deploy/README.md`):**
 7. ~~Dockerfile~~ — DONE, both backend and frontend, multi-stage production builds.
-8. ~~AWS setup steps~~ — DONE as a runnable guide (RDS, ECR, App Runner). GitHub Actions CI also written (`.github/workflows/deploy.yml`). Not yet actually executed against a real AWS account — that's your side to run, since it needs your account/region/VPC specifics.
-9. Actually backfill the historical data we now have in hand — the 3 Excel files (daily/yearly production, June balance sheet) and the validated Tally `daybook.xml`/`TrialBal.xml` — into a real deployed database.
+8. ~~AWS deployment~~ — DONE and LIVE on ECS Fargate + ALB + RDS in `ap-south-1`. CI/CD redeploys on every push to `main` via GitHub Actions (OIDC auth, no stored AWS keys). App Runner was the original plan but wasn't available on the account, so we run on ECS instead. Full details in [`deploy/README.md`](deploy/README.md).
+9. Backfill the historical data we now have in hand — the 3 Excel files (daily/yearly production, June balance sheet) and the validated Tally `daybook.xml`/`TrialBal.xml` — into the live database.
 
 **The bigger one, once the above is live:**
 10. The AI Business Analyst / Copilot itself — the actual reason StoneOS exists, per the original spec. Everything so far has been the foundation (clean structured data, traceability, the semantic layer it needs to reason over). This hasn't been started yet, and it's the natural next phase once real data is flowing daily rather than sitting in our working files.
