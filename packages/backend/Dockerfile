@@ -3,6 +3,9 @@
 
 FROM node:20-alpine AS builder
 WORKDIR /app
+# Alpine ships OpenSSL 3.x with no libssl.so.1.1 — Prisma's engine
+# auto-detection needs openssl present to pick the right binary target.
+RUN apk add --no-cache openssl
 
 # Install ALL deps (including dev) — needed for `nest build` and `prisma generate`.
 COPY package.json ./
@@ -18,6 +21,7 @@ RUN npm run build
 FROM node:20-alpine AS production
 WORKDIR /app
 ENV NODE_ENV=production
+RUN apk add --no-cache openssl
 
 COPY package.json ./
 RUN npm install --omit=dev
