@@ -25,3 +25,12 @@ Thumbs.db
 
 # local Claude Code config (per-developer)
 .claude/settings.local.json
+
+# raw source data for one-off backfills (real financial/production data, never commit)
+_temp/
+excel data.zip
+*.xlsx
+*.xls
+
+# vendored tool installs (nested git repos, not part of this project's source)
+.claude/skills/three-man-team/

@@ -1,3 +1,5 @@
+@.claude/skills/token-optimization.md
+
 # StoneOS — Vedam Granites Pilot
 
 Modular monolith. NestJS backend + Next.js frontend, PostgreSQL via Prisma,
@@ -150,3 +152,6 @@ POST /expenses/:id/allocate           { allocations: [{ rawBlockId, allocatedAmo
 GET  /vehicles                        list vehicles
 POST /vehicles                        { name, vehicleType?, purchaseDate? }
 ```
+
+## Three Man Team
+Available agents: Arch (Architect), Bob (Builder), Richard (Reviewer)
