@@ -1,8 +1,91 @@
-# Review Feedback — Step 2 (Round 2)
+# Review Feedback — Step 3
 *Written by Reviewer. Read by Builder and Architect.*
 
 Date: 2026-07-11
 Ready for Builder: YES
+
+---
+
+## Must Fix
+*None.*
+
+## Should Fix
+
+- `raw-block.service.ts:99-101` — `reportedSessions` is filtered on `totalSlabsCut != null`,
+  and `damagedSlabCount` is then read with `?? 0` inside the same filtered set. This assumes
+  `totalSlabsCut` and `damagedSlabCount` are always written together. Today that assumption
+  holds — `cutting-session.service.ts:141-152`'s `complete()` is the only code path that ever
+  sets either field, and it always sets `status: "completed"`, `totalSlabsCut`,
+  `finalGoodSlabCount`, and `damagedSlabCount` atomically in one `update()` inside a
+  transaction, so the two fields can never be out of sync in the current codebase. But the
+  schema comment for `CuttingSession.status` (`schema.prisma:139`) documents a third value,
+  `aborted`, that no code path sets yet. If an `aborted` (or any future) state is ever
+  introduced that writes `totalSlabsCut` without `damagedSlabCount`, this would silently
+  under-count loss (treating a real null as 0) rather than excluding the session the way the
+  `in_progress` case is deliberately excluded. Not a bug against today's data or the Definition
+  of Done — no fix required now — but worth a one-line comment noting the assumption, or a
+  `BUILD-LOG.md` entry, so it isn't rediscovered the hard way when `aborted` gets wired up.
+
+## Escalate to Architect
+*None.*
+
+## Cleared
+
+Reviewed `raw-block.service.ts:67-107` (the only file/lines Bob listed) against the schema
+comment cited in the brief (`schema.prisma:130-151` for `CuttingSession`, `:254-298` for
+`RawBlock`), and traced all 4 Definition-of-Done scenarios plus the two extra edge cases by
+hand rather than taking the smoke-test summary on faith:
+
+1. **6 fields present** — `costBasis`, `totalCost`, `totalSlabsCut`, `damagedSlabCount`,
+   `costPerSlab`, `lossAmount` are all returned unconditionally from `computeDamagedSlabLoss`.
+2. **Zero-damage block → `lossAmount: 0`, not null** — confirmed by hand: when
+   `damagedSlabCount` sums to `0` but `costPerSlab` is non-null, `lossAmount = costPerSlab * 0
+   = 0`, and the null-guard on `lossAmount` is keyed off `costPerSlab`, not `damagedSlabCount`
+   — the one place a careless implementation gets this wrong, correctly handled here.
+3. **No cost recorded → all three cost fields null** — `costBasis` falls through both
+   `!= null` checks to `null`; `totalCost` inherits `null` from `costBasis === null`;
+   `costPerSlab`'s guard (`totalCost != null && totalSlabsCut > 0`) short-circuits on the
+   first clause. `totalSlabsCut`/`damagedSlabCount` are correctly independent of cost and
+   still populate from sessions.
+4. **No completed session → `totalSlabsCut: 0`, `costPerSlab: null`** — empty
+   `cuttingSessions` (or all-null-`totalSlabsCut`) produces an empty `reportedSessions`,
+   `reduce` over `[]` correctly yields `0` (not `NaN`/undefined), and the `totalSlabsCut > 0`
+   guard correctly forces `costPerSlab` to `null` rather than dividing by zero.
+5. **`actualAmountPaid` preferred over `invoicedAmount`** — ternary checks
+   `actualAmountPaid != null` first; confirmed this is a `!= null` check (not truthy), so a
+   genuine `actualAmountPaid: 0` (block received free) is correctly treated as a present cost
+   basis rather than falling through to `invoicedAmount`.
+6. **Multi-session summing excludes in-progress** — `reportedSessions` filter on
+   `totalSlabsCut != null` correctly drops an `in_progress` session with null counts while
+   summing two `completed` sessions; verified this is currently equivalent to filtering on
+   `status === "completed"` given point above (see Should Fix).
+
+**Multi-tenancy**: `findOne`'s `findFirst({ where: { id, factoryId } })` is unchanged and still
+scopes correctly; the new `cuttingSessions: true` include adds no additional query and no
+cross-factory read (`CuttingSession.factoryId` isn't referenced or leaked — only
+`totalSlabsCut`/`damagedSlabCount` are read). No conflict with the no-cross-factory-access
+rule.
+
+**`Number(x)` precedent claim verified** — repo-wide check confirms `daily-sales-summary.service.ts:38-40`
+and `expense.service.ts:67` are the only other Decimal→number conversions in the backend, both
+using plain `Number(x)`, no `.toNumber()` anywhere. Bob's claim that this is "the closer match"
+is accurate, not just asserted.
+
+**`async findOne` change is safe** — the only caller (`raw-block.controller.ts:19-20`) does a
+bare `return this.service.findOne(...)`; Nest awaits controller return values regardless of
+whether they're a plain value or a `Promise`, so making the method `async` is transparent to
+the controller. Confirmed no other internal call site in the service calls `this.findOne`
+(grepped the file) that could be affected by the shape change (extra `cuttingSessions`/
+`damagedSlabLoss` keys on the returned object).
+
+**`findAll` untouched** — confirmed, no diff.
+
+Step 3 is clear.
+
+---
+
+# Step 2 (Round 2)
+*Preserved below for the full trail.*
 
 ---
 

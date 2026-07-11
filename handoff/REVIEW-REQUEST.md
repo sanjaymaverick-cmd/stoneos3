@@ -1,106 +1,93 @@
-# Review Request — Step 2 (Round 2)
+# Review Request — Step 3
+
 *Written by Builder. Read by Reviewer.*
 
 Ready for Review: YES
 
 ---
 
-## What Changed Since Round 1
+## What This Step Does
 
-Richard's `handoff/REVIEW-FEEDBACK.md` (2026-07-11, Ready for Builder: NO) found 3 Must Fix
-bugs and 5 Should Fix items. Separately, the Project Owner resolved Richard's "Escalate to
-Architect" item directly: **`transfer_in` is disabled entirely — no cross-factory data access
-of any kind until a proper multi-factory model is built at the login/access layer.** Both are
-addressed in this round.
+Adds a read-only computed `damagedSlabLoss` object to the response of `GET /raw-blocks/:id`,
+valuing a block's damaged-slab loss at raw block purchase cost (never finished slab price),
+per the schema comment on `CuttingSession.damagedSlabCount` (`schema.prisma:147-151`). No new
+tables, no schema migration, no persisted writes — purely computed at read time.
 
-## Must Fix — All 3 Resolved
+## Files Changed
 
-1. **`entrySource` never validated against its allowlist at runtime**
-   (`raw-block.service.ts`) — a bogus value (or, previously, `"transfer_in"`) would sail past
-   the role check and fall through to `costStatus: "confirmed"` / `currentStatus: "in_stock"`.
-   Fixed: `ENTRY_SOURCES` allowlist (now just `["purchase", "opening_balance"]` — see scope
-   change below) checked up front, `BadRequestException` otherwise, same pattern as
-   `RECONCILE_FIELDS`.
-2. **`validateMachineType` had no `factoryId` filter** — the only unscoped `Machine` lookup in
-   the codebase, letting an `opening_balance` intake attach a different factory's machine to a
-   new `CuttingSession`/`PolishingSession`. Fixed: now takes `factoryId` and uses
-   `findFirst({ where: { id: machineId, factoryId } })`, matching `machine.service.ts`'s
-   established pattern.
-3. **`reconcile()`'s cost_status rule wrongly graduated non-estimated blocks to `confirmed`** —
-   correcting `weightTons` on an ordinary still-`"pending"` purchase block (invoice not yet
-   entered) unconditionally forced it to `"confirmed"`. Fixed:
-   `costStatus: block.costStatus !== "estimated" ? block.costStatus : (fieldName === "weightTons" ? "estimated" : "confirmed")`
-   — a block that isn't already `"estimated"` now keeps its existing `costStatus` untouched.
+| File | Lines | Change |
+|---|---|---|
+| `packages/backend/src/modules/inventory/raw-block.service.ts` | `findOne` (was line 67-72, now ~67-79) + new private `computeDamagedSlabLoss` helper (~81-110) | `findOne` is now `async`, adds `cuttingSessions: true` to its `include`, and attaches `damagedSlabLoss` computed by the new helper onto the returned block object before returning it. |
 
-## Should Fix — 2 Taken, Rest Logged
+No controller changes (`raw-block.controller.ts`'s `findOne` already just passes through).
+No schema/migration changes. `findAll` untouched.
 
-Taken (both quick):
-- `input.startingState` now validated against its 3-value allowlist (`STARTING_STATES`),
-  `BadRequestException` on garbage input instead of silently defaulting to `raw_yard`.
-- Guard against `sourceFactoryId === factoryId` was implemented, then **removed again** as a
-  direct consequence of the scope change below — `sourceFactoryId` isn't accepted as input at
-  all anymore, so the guard has nothing to guard.
+## What and Why (one sentence each)
 
-Logged to `handoff/BUILD-LOG.md` as follow-ups (per the coordinator's instruction, not fixed
-this round): missing minimum-data validation for `opening_balance` (nothing requires
-`weightTons` be supplied), the `createMany`-vs-`Promise.all` efficiency note for finished_stock
-slab creation. The "transfer_in not carrying forward source block's cost figures" item is now
-moot — see below.
-
-## Scope Change — `transfer_in` Disabled Entirely
-
-Project Owner's direct decision (recorded in `handoff/ARCHITECT-BRIEF.md`), verbatim: *"no
-cross factory data transfer. all factories independent units. once we are ready for multi
-factory setup in app we will add that in login process so no cross factory data leak
-happens."*
-
-Implemented:
-- `EntrySource` type and `ENTRY_SOURCES` allowlist now only accept `"purchase"` /
-  `"opening_balance"`. Passing `entrySource: "transfer_in"` is rejected with
-  `BadRequestException` through the same allowlist check as any other invalid value — no
-  special-cased error path.
-- **Deleted `validateTransferIn` entirely** (method + call site), not left as dead code.
-- Removed `sourceFactoryId`/`transferredFromBlockId` from `CreateRawBlockInput` and from the
-  `tx.rawBlock.create()` data object — the service no longer reads or writes either field.
-- No code path in `raw-block.service.ts` queries another factory's `Factory` or `RawBlock` rows
-  anymore.
-- **Schema left untouched**, as instructed: `RawBlock.sourceFactoryId`/`transferredFromBlockId`/
-  `transferredToBlocks` and `Factory.blockTransfersOut` remain in `schema.prisma` and the
-  already-applied migration — harmless, additive, ready for whenever multi-factory support is
-  built properly at the login/access layer.
-- This also fully resolves Must Fix #2 as it applied to `transfer_in` (moot — that branch no
-  longer exists); the fix still stands for the `opening_balance` path as described above.
-
-## Files Changed (Round 2)
-
-| File | Change |
-|---|---|
-| `packages/backend/src/modules/inventory/raw-block.service.ts` | All 3 Must Fix bugs; 2 Should Fix items; `transfer_in` fully removed (type, allowlist, `validateTransferIn`, input fields, create() data). No schema/migration changes. |
-
-`raw-block.controller.ts` needed no changes this round (it never referenced `transfer_in` or
-the removed fields directly).
+- `findOne` includes `cuttingSessions` now — needed to read `totalSlabsCut`/`damagedSlabCount`
+  per session, since a block can have more than one session.
+- `computeDamagedSlabLoss` picks `actualAmountPaid` over `invoicedAmount` (fallback) as cost
+  basis, per Owner's explicit purchase-price-only decision in the brief (no
+  `ExpenseAllocation`, untouched).
+- Sums `totalSlabsCut`/`damagedSlabCount` across every session where `totalSlabsCut` is not
+  null — excludes an `in_progress` session that hasn't reported a physical count yet, rather
+  than treating its nulls as zero (which would silently understate `totalSlabsCut`).
+- `costPerSlab` = `totalCost / totalSlabsCut`, null-safe on both null `totalCost` and
+  zero `totalSlabsCut` (division-by-zero guard).
+- `lossAmount` = `costPerSlab * damagedSlabCount`; null only when `costPerSlab` is null, so a
+  genuine zero-damage block reports `lossAmount: 0`, not null — this distinction is the one
+  place a careless implementation would get it wrong.
+- Decimal→number conversion uses `Number(x)`, matching the existing pattern in
+  `expense.service.ts`/`daily-sales-summary.service.ts` (no `.toNumber()` precedent exists
+  anywhere else in the codebase, so this was the closer match to "whatever pattern the rest of
+  this service/module already uses" per the brief's flag).
+- Preserved `findOne`'s existing behavior of returning `null` unchanged (no new
+  `NotFoundException`) when no block matches — added an explicit early return before running
+  the computation, rather than changing not-found semantics as a side effect.
 
 ## Verification
 
-`tsc --noEmit` clean, `npm run build` clean. Re-ran the same throwaway-factory smoke test
-approach as Round 1 (`scratchpad/smoke-test-raw-block.js`, not committed), updated to drop the
-`transfer_in` create-path cases and add regression checks for all 3 Must Fix bugs plus the
-scope change. **24/24 checks passed**, including the ones called out explicitly:
+`tsc --noEmit` clean. `npm run build` clean (no output, no errors).
 
-- `entrySource: "backdoor"` → rejected (400).
-- `entrySource: "transfer_in"` → rejected (400) — confirms the disable is real, not just typed away.
-- A cross-factory `cuttingMachineId` (belonging to a second throwaway factory) → rejected (400), and confirmed no `CuttingSession` row was created for it.
-- Reconciling `weightTons` (and separately `invoicedAmount`) on a fresh, still-`"pending"` purchase block → `costStatus` stays `"pending"` in both cases, not forced to `"confirmed"`.
-- All Round 1 checks (purchase legacy shape, role gating, mid_cutting/finished_stock reconstruction, wrong-machine-type rejection, reconcile's estimated→confirmed graduation rule) still pass unchanged.
+Wrote and ran a throwaway smoke-test script (`scratchpad/smoke-test-damaged-slab-loss.js`, not
+committed) against local Postgres, in a disposable factory + machine, covering all 4 Definition
+of Done scenarios plus two extra edge cases:
 
-Cleaned up all test rows afterward; confirmed via direct query that local Postgres is back to
-exactly Step 1's state (1 `Factory`, 2,421 `Expense` rows, `raw_block` empty). No production
-database contact at any point.
+1. Normal block, `actualAmountPaid` present, 3 damaged of 20 total slabs cut →
+   `costBasis: "actual_amount_paid"`, `costPerSlab: 5000`, `lossAmount: 15000`. Also confirms
+   `actualAmountPaid` is preferred over `invoicedAmount` when both are present.
+2. Zero damaged slabs → `lossAmount: 0` (not null), `costPerSlab` still correctly computed.
+3. No cost recorded (`actualAmountPaid`/`invoicedAmount` both null) → `costBasis: null`,
+   `costPerSlab: null`, `lossAmount: null`, while `totalSlabsCut`/`damagedSlabCount` are still
+   correctly populated from the session (they don't depend on cost).
+4. No completed `CuttingSession` at all → `totalSlabsCut: 0`, `costPerSlab: null`,
+   `lossAmount: null`, while `costBasis` is still populated from the block's own cost fields
+   (it doesn't depend on sessions).
+5. (Extra) Only `invoicedAmount` present, `actualAmountPaid` null → `costBasis` correctly
+   falls back to `"invoiced_amount"`.
+6. (Extra) Block with 3 `CuttingSession` rows: two completed (`totalSlabsCut` 10 and 5) and one
+   `in_progress` with `totalSlabsCut`/`damagedSlabCount` both null → sums only the two
+   completed sessions (`totalSlabsCut: 15`, `damagedSlabCount: 2`), confirming the in-progress
+   session is excluded rather than counted as zero.
 
-## Open Items Carried Forward
+**24/24 checks passed.** Cleaned up all test rows afterward; confirmed local Postgres is back
+to exactly its prior state (1 `Factory`, 2,421 `Expense` rows, `raw_block` empty — same as after
+Step 2). No production database contact at any point.
 
-- Missing minimum-data validation for `opening_balance` (e.g. `weightTons` isn't required) —
-  logged to BUILD-LOG.md, not fixed this round.
-- `createMany` vs `Promise.all` for finished_stock slab creation — logged as an efficiency nit,
-  not a correctness bug (individual creates are needed for the per-slab ids used by
-  `PolishingSessionSlab` linking).
+## Open Questions / Uncertainties
+
+None outstanding for this step. All judgment calls (cost basis preference, multi-session
+summing, null-propagation rules) were explicit in the brief; verified against the real schema
+(`schema.prisma:130-151, 254-298`) and the existing Decimal-handling precedent before writing
+any code.
+
+## Definition of Done — Self-Check
+
+- [x] `GET /raw-blocks/:id` returns `damagedSlabLoss` with the 6 fields
+- [x] Correct on a block with zero damaged slabs (`lossAmount: 0`)
+- [x] Correct on a block with no cost recorded yet (`costBasis: null`, `costPerSlab: null`,
+      `lossAmount: null`)
+- [x] Correct on a block with no completed `CuttingSession` yet (`totalSlabsCut: 0`,
+      `costPerSlab: null`)
+- [x] `findAll` (list endpoint) unchanged — not touched
+- [x] `handoff/REVIEW-REQUEST.md` written (this file)

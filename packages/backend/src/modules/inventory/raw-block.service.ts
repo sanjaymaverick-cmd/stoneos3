@@ -64,11 +64,46 @@ export class RawBlockService {
     });
   }
 
-  findOne(factoryId: string, id: string) {
-    return this.prisma.rawBlock.findFirst({
+  async findOne(factoryId: string, id: string) {
+    const block = await this.prisma.rawBlock.findFirst({
       where: { id, factoryId },
-      include: { transitions: { orderBy: { occurredAt: "asc" } }, slabs: true },
+      include: { transitions: { orderBy: { occurredAt: "asc" } }, slabs: true, cuttingSessions: true },
     });
+    if (!block) return block;
+
+    return { ...block, damagedSlabLoss: this.computeDamagedSlabLoss(block) };
+  }
+
+  // Read-only computed value — never persisted. Purchase-price cost basis only
+  // (actualAmountPaid, falling back to invoicedAmount): Owner explicitly chose
+  // this over purchase+allocated-expenses (ExpenseAllocation is untouched here)
+  // for simplicity/availability. Per-slab cost divides by the PHYSICAL slab
+  // count (good + damaged), not finalGoodSlabCount, per the schema comment on
+  // CuttingSession.damagedSlabCount (schema.prisma:147-151) — damage happens
+  // before polishing/finishing adds value, so it's valued at raw block cost,
+  // never finished slab price.
+  private computeDamagedSlabLoss(block: {
+    actualAmountPaid: unknown;
+    invoicedAmount: unknown;
+    cuttingSessions: { totalSlabsCut: number | null; damagedSlabCount: number | null }[];
+  }) {
+    const costBasis: "actual_amount_paid" | "invoiced_amount" | null =
+      block.actualAmountPaid != null ? "actual_amount_paid" : block.invoicedAmount != null ? "invoiced_amount" : null;
+    const totalCost =
+      costBasis === "actual_amount_paid"
+        ? Number(block.actualAmountPaid)
+        : costBasis === "invoiced_amount"
+          ? Number(block.invoicedAmount)
+          : null;
+
+    const reportedSessions = block.cuttingSessions.filter((s) => s.totalSlabsCut != null);
+    const totalSlabsCut = reportedSessions.reduce((sum, s) => sum + (s.totalSlabsCut ?? 0), 0);
+    const damagedSlabCount = reportedSessions.reduce((sum, s) => sum + (s.damagedSlabCount ?? 0), 0);
+
+    const costPerSlab = totalCost != null && totalSlabsCut > 0 ? totalCost / totalSlabsCut : null;
+    const lossAmount = costPerSlab != null ? costPerSlab * damagedSlabCount : null;
+
+    return { costBasis, totalCost, totalSlabsCut, damagedSlabCount, costPerSlab, lossAmount };
   }
 
   async create(user: AuthenticatedUser, input: CreateRawBlockInput) {

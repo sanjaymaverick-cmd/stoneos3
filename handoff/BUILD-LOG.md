@@ -5,19 +5,16 @@
 
 ## Current Status
 
-**Active step:** 2 — RawBlock opening-balance / entry-provenance support
-**Last cleared:** Step 2 — Richard's Round 2 re-review confirmed all 3 Must Fix bugs genuinely
-fixed and `transfer_in` fully removed with no leftover cross-factory code — Ready for Builder:
-YES — 2026-07-11. Step 2 is code-complete and reviewed; not yet committed to git or deployed
-anywhere (per Owner's standing hold on AWS/production pushes and the disabled GitHub Actions
-workflow).
+**Active step:** none — Step 3 cleared, awaiting Owner go-ahead to commit.
+**Last cleared:** Step 3 — Richard's review found 0 Must Fix, 1 non-blocking Should Fix (logged
+in the Step 3 entry below, no code change needed) — Ready for Builder: YES — 2026-07-11.
+Step 2 remains code-complete and reviewed (Richard's Round 2 re-review confirmed all 3 Must
+Fix bugs genuinely fixed and `transfer_in` fully removed) but not yet committed.
 **Pending deploy:** Step 1: production run OUT OF SCOPE for the team — Owner will run the
-historical backfill against any real environment himself, manually (2026-07-11 decision). Step
-2: migration applied to local Postgres only, reviewed clean, NOT committed/pushed — production
-RDS untouched by either step. Local dev DB retains Step 1's backfilled data (verified intact
-after Step 2's migration + smoke tests). Also per 2026-07-11 decision, the old AWS deployment
-(stoneos-db/ECS/ALB) is out of scope entirely — treat this as a fresh project with no existing
-production environment.
+historical backfill against any real environment himself, manually (2026-07-11 decision). Steps
+2 and 3: local Postgres only, reviewed clean, NOT yet committed — no production environment
+exists for this project (2026-07-11 decision: the old AWS deployment, stoneos-db/ECS/ALB, is
+out of scope entirely — treat this as a fresh project with no existing production).
 
 ---
 
@@ -205,6 +202,56 @@ script (dropped the transfer_in create-path cases, added regression checks for a
 bugs + the transfer_in disable) — **24/24 checks passed**. Confirmed after cleanup that local
 Postgres is back to exactly Step 1's state (1 factory, 2,421 Expense rows, raw_block empty). No
 production database contact.
+
+### Step 3 — Cost allocation for damaged slabs — CLEARED, AWAITING COMMIT
+*Date: 2026-07-11*
+
+Files changed:
+- `packages/backend/src/modules/inventory/raw-block.service.ts` — `findOne` now `async`, adds
+  `cuttingSessions: true` to its existing `include`, and attaches a computed `damagedSlabLoss`
+  object (via new private `computeDamagedSlabLoss` helper) onto the returned block. Nothing
+  persisted; `findAll` untouched.
+
+Decisions made — all per the brief, no ambiguity requiring escalation:
+- Cost basis: `actualAmountPaid` preferred, `invoicedAmount` fallback, `null` if neither —
+  matches `Number(x)` Decimal-to-number conversion pattern already used in
+  `expense.service.ts`/`daily-sales-summary.service.ts` (no `.toNumber()` elsewhere in the
+  codebase, so followed existing precedent instead).
+- `totalSlabsCut`/`damagedSlabCount` summed across every `CuttingSession` on the block where
+  `totalSlabsCut` is not null (an `in_progress` session with nothing reported yet is excluded
+  from the sum, not treated as zero) — covers the normal one-session case and the rarer
+  multi-session case (e.g. a block re-cut or continued across two sessions) the same way.
+- `costPerSlab`/`lossAmount` null-propagation exactly as specified: `costPerSlab` null if
+  `totalCost` is null OR `totalSlabsCut` is 0; `lossAmount` null only if `costPerSlab` is null
+  (a genuine 0 damaged-slab count still yields `lossAmount: 0`, not null).
+- `findOne`'s prior behavior of returning `null` (unchanged, no `NotFoundException`) when no
+  matching block exists was preserved exactly — added an explicit early return rather than
+  letting `computeDamagedSlabLoss` run against `null`.
+
+Verification: `tsc --noEmit` clean, `npm run build` clean (no output, no errors). Wrote and ran
+a throwaway smoke-test script (`scratchpad/smoke-test-damaged-slab-loss.js`, not committed)
+against local Postgres in a disposable factory/machine — **24/24 checks passed**, covering: cost
+basis preference (actual over invoiced) and fallback (invoiced when actual is null); zero
+damaged slabs (`lossAmount: 0`, not null); no cost recorded (`costBasis`/`costPerSlab`/
+`lossAmount` all null, but `totalSlabsCut`/`damagedSlabCount` still populated from the session);
+no completed `CuttingSession` at all (`totalSlabsCut: 0`, `costPerSlab: null`, but `costBasis`
+still populated from the block's own cost fields); and a multi-session block where one session
+is still `in_progress` with nulls (confirmed excluded from the sum, not counted as zero).
+Cleaned up all test rows afterward; confirmed local Postgres is back to exactly its prior state
+(1 `Factory`, 2,421 `Expense` rows, `raw_block` empty). No production database contact.
+
+Reviewer findings (Richard, 2026-07-11): 0 Must Fix, 0 Escalate to Architect. Traced all 4
+Definition-of-Done scenarios plus the 2 extra edge cases by hand rather than trusting Bob's
+smoke-test summary; confirmed the `!= null` (not truthy) check correctly treats
+`actualAmountPaid: 0` as a real cost basis, and that `findFirst({ id, factoryId })` scoping is
+unchanged (no cross-factory leak). One non-blocking Should Fix, logged here per Richard's own
+recommendation rather than a code change: the session-summing logic
+(`raw-block.service.ts:99-101`) assumes `totalSlabsCut` and `damagedSlabCount` are always
+written together, which holds today because `cutting-session.service.ts`'s `complete()` is the
+only writer and sets both atomically — but `CuttingSession.status` documents an unused
+`aborted` value that, if ever wired up to set one field without the other, would silently
+under-count loss. KNOWN GAP — revisit if/when `aborted` is implemented.
+Ready for Builder: YES — 2026-07-11.
 
 ---
 

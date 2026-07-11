@@ -113,7 +113,7 @@ the codebase — if you add one, you've broken tenant isolation.
 ## Next steps (suggested order)
 
 **Close out remaining gaps in what's already built:**
-1. Run `prisma/bootstrap.ts` FIRST (`OWNER_EMAIL=you@example.com npx ts-node prisma/bootstrap.ts`) — creates the factory, seeds B-21/LPM, grants you owner access, all in one step. Use `prisma/seed-machines.ts` later only if you add a second factory.
+1. Run `prisma/bootstrap.ts` FIRST (`OWNER_EMAIL=you@example.com npx ts-node prisma/bootstrap.ts`) — creates the factory, seeds B-21/LPM, grants you owner access, all in one step. Use `prisma/seed-machines.ts` later only if you add a second factory. **Still outstanding** — local Postgres has a placeholder `Factory` row (inserted just to satisfy the backfill script's foreign key) but zero `Machine` rows and no real Clerk-authenticated owner grant, so a real bootstrap run hasn't happened yet.
 2. ~~User provisioning flow~~ — DONE, backend AND frontend. `/admin/users` page: grant-access form + team list, gated client-side via Clerk's `publicMetadata.role` (owner/admin only — real enforcement is still server-side via RolesGuard, the client check is just UX). "Team" link in nav only appears for owner/admin.
 3. Cost allocation for damaged slabs — `damagedSlabCount` is tracked but nothing yet values that loss against raw block cost (deliberately NOT finished slab price — see schema notes).
 4. Recovery ratio report (105 sqft/ton benchmark) — documented on `RawBlock` in the schema, not yet built as a live report. Must use sale-time sqft only.
