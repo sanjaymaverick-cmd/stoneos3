@@ -5,16 +5,18 @@
 
 ## Current Status
 
-**Active step:** none — Step 3 cleared, awaiting Owner go-ahead to commit.
+**Active step:** none — Step 3 cleared, committed (`7057281`), nothing mid-flight.
 **Last cleared:** Step 3 — Richard's review found 0 Must Fix, 1 non-blocking Should Fix (logged
 in the Step 3 entry below, no code change needed) — Ready for Builder: YES — 2026-07-11.
-Step 2 remains code-complete and reviewed (Richard's Round 2 re-review confirmed all 3 Must
-Fix bugs genuinely fixed and `transfer_in` fully removed) but not yet committed.
+Committed to `main` locally same day. Step 2 was already committed earlier this session
+(`ab63693`) — also code-complete and reviewed clean (Richard's Round 2 re-review confirmed all
+3 Must Fix bugs genuinely fixed and `transfer_in` fully removed).
 **Pending deploy:** Step 1: production run OUT OF SCOPE for the team — Owner will run the
 historical backfill against any real environment himself, manually (2026-07-11 decision). Steps
-2 and 3: local Postgres only, reviewed clean, NOT yet committed — no production environment
-exists for this project (2026-07-11 decision: the old AWS deployment, stoneos-db/ECS/ALB, is
-out of scope entirely — treat this as a fresh project with no existing production).
+2 and 3 are committed to local `main` only — `main` is 7 commits ahead of `origin/main`, nothing
+pushed. No production environment exists for this project (2026-07-11 decision: the old AWS
+deployment, stoneos-db/ECS/ALB, is out of scope entirely — treat this as a fresh project with no
+existing production).
 
 ---
 

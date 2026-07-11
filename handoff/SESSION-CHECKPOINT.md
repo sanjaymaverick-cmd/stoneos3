@@ -5,13 +5,17 @@
 
 ## Where We Stopped
 
-Steps 1 (historical backfill) and 2 (RawBlock opening-balance/entry-provenance) are both
-built, reviewed clean by Richard, and committed locally (4 commits, `main` is ahead of
-`origin/main` — nothing pushed). Local Postgres has Step 1's backfilled data
-(2,421 Expense rows, 514 DailySalesSummary rows) plus Step 2's schema migration applied;
-`raw_block` itself is empty (Step 2 only added capability, no real blocks entered yet).
-Production RDS has not been touched by anything this session. Next action is whatever the
-Project Owner wants to tackle next — nothing is mid-flight.
+Steps 1 (historical backfill), 2 (RawBlock opening-balance/entry-provenance), and 3 (damaged-
+slab cost allocation on `GET /raw-blocks/:id`) are all built, reviewed clean by Richard, and
+committed locally (7 commits, `main` is ahead of `origin/main` — nothing pushed). Local
+Postgres has Step 1's backfilled data (2,421 Expense rows, 514 DailySalesSummary rows) plus
+Step 2's schema migration applied; `raw_block` itself is empty (Steps 2/3 only added
+capability, no real blocks entered yet). There is no production environment for this project —
+the prior AWS deployment (stoneos-db/ECS/ALB) is explicitly out of scope as of this session
+(see `project-stoneos-production-deploy-hold` memory), and historical-backfill execution
+against any real environment is the Owner's own manual responsibility (see
+`project-backfill-manual-by-owner` memory), not the team's. Next action is whichever remaining
+README next-step the Project Owner wants to tackle — nothing is mid-flight.
 
 ---
 
@@ -44,7 +48,7 @@ Project Owner wants to tackle next — nothing is mid-flight.
 - Production run of Step 1's backfill: OUT OF SCOPE for the team as of 2026-07-11 — Owner will
   run it manually himself against any real environment. Nothing further needed from Arch/Bob
   on this.
-- Whether/when to push the 4 local commits to GitHub at all — not decided, currently held.
+- Whether/when to push the 7 local commits to GitHub at all — not decided, currently held.
 - KG-2 (dpr-daily follow-up: daily staff_salary granularity for a future step, if ever wanted)
   and KG-4/KG-7 (Richard's deferred Should Fix items from both steps) are logged but not
   scheduled — see `handoff/BUILD-LOG.md` Known Gaps for full detail.
