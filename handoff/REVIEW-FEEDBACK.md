@@ -1,8 +1,182 @@
-# Review Feedback — Step 3
-*Written by Reviewer. Read by Builder and Architect.*
-
+# Review Feedback — Step 4 (Round 2)
 Date: 2026-07-11
 Ready for Builder: YES
+
+---
+
+## Must Fix
+*None.*
+
+## Should Fix
+
+- `packages/frontend/app/dashboard/page.tsx:80-81` (`OwnerDashboard`'s `load()`) — the
+  Round 1 Must Fix is genuinely fixed for the path it targeted (the `Promise.all` of 5
+  `apiFetch` calls and the aggregation after it: verified the `try` now opens at `:82`, wraps
+  through `:130`, and `setLoaded(true)` moved into a real `finally` at `:136-138` that runs
+  regardless of what happens in `try`/`catch` — this is strictly more robust than
+  `admin/users/page.tsx`'s bare "`setLoaded(true)` after the `try`/`catch`" precedent, since a
+  `finally` also covers a `return`/throw from inside `catch`, which the precedent doesn't need
+  to but Bob's version handles anyway). Confirmed live: re-ran `npx tsc --noEmit` and
+  `npm run build` independently — both clean, `/dashboard` at 3.73 kB / 150 kB First Load JS,
+  matching Bob's numbers exactly, not just taking them on faith. Also independently confirmed
+  `main.ts:6` does default `FRONTEND_URL` to `http://localhost:3000`, corroborating the
+  CORS-triggered "Couldn't load dashboard data: Failed to fetch" live-browser finding Bob
+  reported — that really is the escalated port issue surfacing, not a new bug.
+
+  But one line above the fix is still exposed to the identical symptom: `const token = await
+  safeGetToken(getToken); if (!token) return;` sits *before* the `try`, not inside it. `lib/
+  api.ts:9-16`'s `safeGetToken` swallows `ClerkOfflineError` into a `null` return (explicitly
+  documented there as "callers... treat a null token as 'skip this load'") but re-throws
+  anything else. Either path — a caught-offline `null` token, or an uncaught non-offline
+  `getToken()` error — hits `return`/an unhandled rejection *before* `:136`'s `finally` ever
+  runs, so `loaded` stays `false` forever: the exact "stuck on Loading… permanently, no
+  explanation" failure Round 1 flagged, just reachable now only via the auth step instead of
+  the 5 data fetches. This is not a new regression Bob introduced — `admin/users/page.tsx:26-
+  28`'s `loadUsers` (the pattern Round 1 explicitly told Bob to match) has the identical
+  structure, and Round 1 didn't scope the token line into the Must Fix, so Bob matched exactly
+  what was asked. Not blocking this round for that reason. But going offline mid-load is a real
+  scenario (laptop sleep/wake, a spotty factory-floor connection), not a hypothetical, and it
+  reproduces the very failure mode this step exists to close off — worth closing now while
+  this code is already open, or logging to `BUILD-LOG.md` as a deferred follow-up (applies
+  equally to `loadUsers`). Fix is small: move `setLoaded(true)` into a `finally` that wraps the
+  token fetch too, or add `if (!token) { setLoaded(true); return; }`.
+
+## Escalate to Architect
+*None new this round.* `.claude/launch.json`'s port change (3000 → 3010) — confirmed via `git
+diff` it is byte-identical to Round 1's version, untouched this round, correctly left alone
+per instruction. Round 1's escalation to the Owner stands, still open.
+
+## Cleared
+
+Re-verified both Round 1 items directly against the current code, not just Bob's summary:
+
+- **Must Fix (try/catch/finally around the 5-call `Promise.all`)** — structurally correct as
+  described above; the render branch order (`:155-161`) is `!loaded` → "Loading…" → `errorMsg`
+  → real widgets, so the error ticket only ever shows after the loading gate clears, and
+  `errorMsg` is reset to `""` on a successful run (`:130`) so a stale error can't survive a
+  future successful reload of the same mounted instance.
+- **Should Fix (loading state while Clerk resolves)** — `Dashboard` (`:24-29`) now reads
+  `isLoaded` via `useUser()` and renders the new `LoadingDashboard` (`:35-48`) instead of
+  falling through to `useRole()`'s `undefined` → `PlaceholderDashboard` branch. `useRole.ts` is
+  confirmed untouched (no diff) and its contract (role string, or `undefined` while loading)
+  still matches the brief exactly — the fix lives entirely in `dashboard/page.tsx` as claimed.
+  `LoadingDashboard` reuses only pre-existing CSS classes (`app-shell`, `stamp*`, `ticket*`) —
+  no new `globals.css` hunk was needed or added this round, confirmed via `git diff
+  packages/frontend/app/globals.css` showing only Round 1's addition, nothing new.
+- Both fixes compile and build clean (independently re-run, see above), and the live-browser
+  CORS finding is internally consistent with `main.ts:6`.
+
+One Should Fix above (the token-fetch line still exposed to the same hang class) — not
+blocking, recommend closing it now or logging it, since it's a 1-2 line fix and directly
+relevant to the bug class this step exists to eliminate. Step 4 is otherwise clear.
+
+---
+
+# Round 1
+*Preserved below for the full trail.*
+
+---
+
+## Must Fix
+*Blocks the step. Bob fixes before anything moves forward.*
+
+- `packages/frontend/app/dashboard/page.tsx:57-109` (`OwnerDashboard`'s `load()`) — no
+  `try`/`catch` around the `Promise.all` of 5 `apiFetch` calls or the aggregation that follows,
+  and `setLoaded(true)` (`:108`) only executes if every step above it succeeds. `apiFetch`
+  (`lib/api.ts:27-30`) throws on any non-2xx response. If even one of the 5 endpoints returns a
+  transient error (a cold-start 500, a momentary 401 if the token is near expiry, a 429, a
+  network blip), the whole `load()` throws, `loaded` stays `false` forever, and the Owner's
+  dashboard is stuck on "Loading…" (`:126`) permanently — no error message, no retry, no way to
+  tell what happened. This is the page a user checks first to gauge business health; silently
+  hanging there is worse than either of the codebase's two existing precedents for this exact
+  situation: `admin/users/page.tsx:26-37` (`loadUsers`) wraps its fetch in `try`/`catch` and
+  calls `setLoaded(true)` unconditionally afterward specifically so a failed fetch still resolves
+  the loading gate; `sales/page.tsx` and `expenses/page.tsx` also skip `try`/`catch` but don't
+  use a `loaded`-gated "Loading…" screen at all, so a failure there just leaves lists empty
+  rather than showing a permanent spinner. `dashboard/page.tsx` combined a `loaded` gate (which
+  needs the safety net) with the fetch pattern that doesn't have one. Fix: wrap the body of
+  `load()` (from the `Promise.all` through the last `set*` call) in `try`/`catch`, and move
+  `setLoaded(true)` so it always runs — matching `admin/users/page.tsx`'s established pattern.
+  A caught error should at minimum log/surface something rather than leaving `loaded` at
+  `false` with no explanation.
+
+## Should Fix
+
+- `packages/frontend/lib/useRole.ts:9-12` / `dashboard/page.tsx:24-27` — Bob's own Open
+  Question #1 is legitimate and I agree it's not a Must Fix: because `useRole()` returns
+  `undefined` while `!isLoaded` and `Dashboard` treats `undefined` identically to "not
+  owner/admin," a signed-in owner sees the placeholder message flash for one render before the
+  real dashboard appears. This matches the brief's literal hook contract, so it's not a bug
+  against spec — but it is a real, slightly janky first impression for the one role this whole
+  step was built for. Worth a dedicated "loading" branch in a follow-up rather than reusing the
+  placeholder for two different meanings ("not your dashboard" vs. "we don't know yet"). Log to
+  `handoff/BUILD-LOG.md` as a deferred follow-up if not picked up now.
+
+## Escalate to Architect
+
+- `.claude/launch.json` port change (3000 → 3010), flagged by Bob in Open Question #2 — not a
+  code correctness issue, but a dev-environment workflow question only the Owner can answer:
+  does the Owner's normal local workflow expect this frontend on port 3000? If so, the other
+  process ("STONEOS CONTROL ROOM") needs to move, not this one, and that's outside Bob's
+  authority to decide unilaterally. Bob's investigation before touching it (curling the
+  conflicting process, reading its rendered page to confirm it's a different app, not a stale
+  instance of this one) was the right level of care — no concern with the diagnosis, only with
+  who gets to decide the resolution.
+
+## Cleared
+
+Reviewed the 4 files Bob listed (`useRole.ts` in full; `dashboard/page.tsx` in full — it's a
+full-file rewrite at 246 lines; `globals.css:151-186`; `.claude/launch.json` in full) plus the
+Step 4 section of `handoff/ARCHITECT-BRIEF.md` (brief text only, not the wider spec) to check
+spec compliance:
+
+- **Scope discipline** — `git diff --stat` against `HEAD` shows exactly the files Bob claimed
+  and nothing else (`.claude/launch.json`, `handoff/*.md`, `dashboard/page.tsx`, `globals.css`,
+  new `useRole.ts`); no backend files touched, no drift into other frontend pages. The
+  `globals.css` diff is a single contiguous hunk at the claimed location, nothing scattered
+  elsewhere in the file.
+- **Field-name verification against schema** — spot-checked the claim that Bob verified real
+  shapes rather than assuming them: `totalQtySqft`/`invoicedAmount`/`actualAmountReceived`
+  (`schema.prisma:576-578`, `DailySalesSummary`), `currentStatus`/`serialNumber`/`varietyName`
+  (`schema.prisma:258-267`, `RawBlock`), `rawBlockId`/`rawBlock`/`startedAt`
+  (`schema.prisma:133-139`, `CuttingSession`), `orderDate`/`customer`
+  (`schema.prisma:536-538`, `SalesOrder`) all match what's read in `dashboard/page.tsx`.
+  `cutting-session.service.ts:49-54`'s `findActive` confirms it already filters
+  `status: "in_progress"` and includes `rawBlock`, matching widget 3's assumptions exactly —
+  Bob didn't need to (and didn't) re-filter or guess at the relation.
+- **CSS additions** — every class referenced in the new JSX (`stat-row`, `stat-card`,
+  `stat-number`, `stat-label`, `mini-bar-list/row/label/track/fill/value`, `session-grid/card/
+  serial/variety/days`, `recent-columns/col-title`, `empty-note`, `dashboard-fade-in`) is
+  defined in the `globals.css:151-186` addition; `list-table` and `.mono` (also used in the new
+  JSX) are pre-existing classes, not new. The `#857c6c` literal used repeatedly in the new CSS
+  is the same literal already used 4 other places in the file (`:71,76,107,121`) — "no new
+  colors" checks out, not just asserted. `Ticket`'s `accent` prop (`components/Ticket.tsx:8`)
+  accepts exactly `"brass" | "moss" | "rust"`, matching all 5 call sites.
+- **Backend authorization (pre-existing, not this step's scope)** — confirmed all 5 endpoints
+  the dashboard calls (`raw-blocks`, `cutting-sessions`, `expenses`, `daily-sales-summary`,
+  `sales-orders`) carry `@UseGuards(ClerkAuthGuard[, RolesGuard])` at the controller level, so
+  this step doesn't newly expose anything unauthenticated. Role-gating on this data is
+  UI-only (any authenticated factory user could already call these endpoints directly
+  regardless of role) — that's a pre-existing condition across the whole app, not introduced or
+  worsened by this diff, so not raised as a finding against Step 4 specifically.
+- **`npx tsc --noEmit -p packages/frontend`** — re-ran independently, clean. Matches Bob's
+  claim, not just taken on faith.
+- **`scratchpad/verify-dashboard-widgets.js`** — confirmed the file exists as claimed (not
+  committed, as expected); did not re-run it since its logged output in
+  `handoff/BUILD-LOG.md`'s Step 4 entry is detailed enough to cross-check against the schema
+  work above and against `SESSION-CHECKPOINT.md`'s documented empty states.
+- **No credential entry** — Bob's refusal to sign in through Clerk for a live browser check is
+  correct per the hard-prohibited-action rule; the alternative verification (signed-out gate +
+  read-only DB script) is a reasonable substitute given the constraint.
+
+Everything else — widget field mappings, empty-state handling, `Ticket`/`AppNav` reuse, the
+`PlaceholderDashboard` extraction being verbatim — checks out against the brief. One Must Fix
+above blocks the step; fix it and this is ready to re-review as a small, targeted diff.
+
+---
+
+# Step 3
+*Preserved below for the full trail.*
 
 ---
 

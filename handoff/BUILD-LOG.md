@@ -5,11 +5,14 @@
 
 ## Current Status
 
-**Active step:** none — Step 3 cleared, nothing mid-flight.
-**Last cleared:** Step 3 — Richard's review found 0 Must Fix, 1 non-blocking Should Fix (logged
-below, no code change needed) — Ready for Builder: YES — 2026-07-11. Step 2 was reviewed clean
-earlier this session (Richard's Round 2 re-review confirmed all 3 Must Fix bugs genuinely fixed
-and `transfer_in` fully removed).
+**Active step:** none — Step 4 cleared, nothing mid-flight.
+**Last cleared:** Step 4 — Richard's Round 2 re-review found 0 Must Fix (Ready for Builder: YES,
+2026-07-11); one more tiny non-blocking gap he flagged (token fetch not covered by the
+try/finally) was closed directly by the Architect rather than a third Bob round-trip. Verified
+live in a real browser (not just scripts/tsc) after fixing an unrelated CORS side-effect of the
+port-3000→3010 dev change (`backend/.env`'s `FRONTEND_URL` was stale) — dashboard renders real
+30-day sales/expense totals, correct empty states for cutting sessions/raw block stock, and
+recent expenses, styled consistent with the existing ticket/stamp identity.
 **Repo:** `origin` is now `https://github.com/sanjaymaverick-cmd/stoneos3.git` (repointed
 2026-07-11 — the prior remote, `sos.git`, held the old out-of-scope AWS-deployment learning
 exercise). All local commits through `b0c75ea` are pushed and confirmed matching
@@ -265,6 +268,124 @@ under-count loss. KNOWN GAP — revisit if/when `aborted` is implemented.
 Ready for Builder: YES — 2026-07-11.
 
 ---
+
+### Step 4 — Owner/Admin role-based dashboard — BUILT, AWAITING REVIEW
+*Date: 2026-07-11*
+
+Files changed:
+- `packages/frontend/lib/useRole.ts` (new) — wraps Clerk's `useUser()`, returns the role string
+  from `publicMetadata.role`, or `undefined` while `!isLoaded`. Second call site for this logic
+  (`AppNav.tsx` has its own inline read, left untouched — not in scope this step per the brief).
+- `packages/frontend/app/dashboard/page.tsx` (rewritten) — `Dashboard` now branches on
+  `useRole()`: owner/admin render `OwnerDashboard` (5 widgets), everything else renders
+  `PlaceholderDashboard` (today's unchanged placeholder markup, extracted verbatim into its own
+  component).
+- `packages/frontend/app/globals.css` — added `stat-row`/`stat-card`/`stat-number`/`stat-label`,
+  `mini-bar-list`/`mini-bar-row`/`mini-bar-track`/`mini-bar-fill`/`mini-bar-value`,
+  `session-grid`/`session-card`, `recent-columns`/`recent-col-title`, `empty-note`, and a
+  `dashboard-fade-in` staggered fade-in keyframe — all built from the existing palette
+  variables/fonts, no new colors or fonts introduced.
+- `.claude/launch.json` — added a `backend` dev-server entry (didn't exist before, needed it to
+  verify against a live API) and changed `frontend`'s port from 3000 to 3010 (an unrelated
+  legacy process — a different "STONEOS CONTROL ROOM" app, not this codebase — already owns
+  3000 in the dev environment; verified by curling it and reading its page text before
+  concluding it wasn't this Next.js app).
+
+Decisions made:
+- Verified all 5 endpoints' actual response shapes against the backend source (service +
+  schema) before writing any frontend code, per the brief's explicit instruction not to assume
+  field names — full detail logged in the Builder Plan section of `handoff/ARCHITECT-BRIEF.md`.
+  One correction to the brief's own illustrative text: `RawBlock.currentStatus` real values in
+  this codebase are `in_stock` / `under_cutting` / `cut` (grepped every write site), not the
+  brief's example "polished"/"sold" labels (those live on `Slab.salesStatus`, a different
+  model) — widget 4 groups by whatever `currentStatus` values actually occur rather than
+  hardcoding a status list, so it stays correct if new states are added later.
+- Reused the already-extracted `Ticket` component (`components/Ticket.tsx`, used by
+  `admin/users/page.tsx`) instead of hand-rolling ticket markup — keeps the dashboard visually
+  identical to other pages with less duplication.
+- Widget 5 (recent activity): fetched `/sales-orders` and `/expenses` unfiltered and
+  sorted/sliced client-side, per the brief (neither endpoint supports the filtering this widget
+  needs from the frontend's existing usage patterns).
+- Micro-interactions per the brief's "light, functional" guidance: a staggered fade-in on the 5
+  ticket cards on load (`dashboard-fade-in`, 40ms stagger), and a subtle lift + brass border on
+  hover for `.stat-card`/`.session-card` — no decorative animation beyond that.
+- `useRole()` returns `undefined` while Clerk is loading (matches the brief's literal spec) —
+  this means a signed-in owner briefly sees the non-owner placeholder for one render before
+  Clerk resolves, rather than a dedicated loading skeleton. Considered adding a distinct loading
+  state but the brief specifies the hook's return shape exactly as built; flagging as an open
+  question below rather than deviating unbriefed.
+
+Verification:
+- `npx tsc --noEmit` (frontend) — clean.
+- `npm run build` (frontend) — clean, `/dashboard` compiles (3.61 kB, 149 kB First Load JS).
+- Live browser check: could not complete a logged-in walkthrough — Clerk sign-in requires
+  entering a password, which is a hard-prohibited action for Claude Code regardless of consent
+  (credential entry into any field). Confirmed instead: (a) `/dashboard` compiles and renders
+  the Clerk sign-in gate correctly when signed out (same `AuthGate` behavior as every other
+  protected page — verified via browser navigation, got the real sign-in page, not an error);
+  (b) wrote and ran `scratchpad/verify-dashboard-widgets.js` (not committed) — a read-only
+  script against local Postgres that runs the exact same Prisma queries and client-side
+  aggregation the dashboard's `load()` performs, against the real "Vedam Granites" factory.
+  Results against real backfilled data: sales summary (13 days in range) → 48,559 sqft,
+  ₹28,04,987 invoiced, ₹0 received (matches — `actualAmountReceived` was never backfilled with
+  real figures, not a bug); expense summary (65 rows in range) → ₹36,10,990 total, top 5
+  categories correctly sorted descending; active sessions and raw block stock both correctly
+  empty (matches `SESSION-CHECKPOINT.md`: `raw_block` has no rows yet); recent sales orders
+  correctly empty (0 `SalesOrder` rows exist — only backfilled `DailySalesSummary` rows exist,
+  which is a different model); recent expenses correctly shows the 5 most recent of 2,421 rows.
+  No production database contact.
+
+Open questions for Richard:
+- The `useRole()` loading-state behavior above (brief owner sees placeholder before Clerk
+  resolves) — acceptable as literally specified, or worth a distinct loading state in a
+  follow-up?
+- `.claude/launch.json`'s frontend port change (3000 → 3010) is a local dev-environment
+  workaround for an unrelated stray process already bound to 3000, not a code change — flagging
+  in case the Owner's normal dev workflow expects port 3000 specifically.
+
+#### Step 4 Round 2 — Richard's Must Fix + Should Fix
+*Date: 2026-07-11*
+
+Richard's `handoff/REVIEW-FEEDBACK.md` (Ready for Builder: NO) found 1 Must Fix, fixed in
+`dashboard/page.tsx`:
+- `OwnerDashboard`'s `load()` had no `try`/`catch` around the `Promise.all` of 5 `apiFetch`
+  calls, and `setLoaded(true)` only ran on the success path — a single transient failure (cold
+  start, near-expiry token, network blip) left the dashboard stuck on "Loading…" forever with no
+  explanation. Fixed: wrapped the body of `load()` in `try`/`catch`, moved `setLoaded(true)` into
+  a `finally` so it always runs (matching `admin/users/page.tsx`'s `loadUsers` pattern exactly),
+  added an `errorMsg` state set in the `catch`, and added a third render branch — `!loaded` →
+  "Loading…", `errorMsg` → a rust-colored "Couldn't load dashboard data: …" ticket, else → the
+  real widgets — so a failure is visible and terminal rather than an infinite spinner.
+
+Also took the Should Fix (useRole loading-state flash) since a clean, low-risk fix was available
+without changing `useRole()`'s contract: `Dashboard` now also reads Clerk's own `isLoaded` via
+`useUser()` and renders a new `LoadingDashboard` component (distinct from `PlaceholderDashboard`)
+while `!isLoaded`, before branching on role. This closes the one-render flash of the non-owner
+placeholder for a signed-in owner/admin without touching `useRole.ts`'s return contract, which
+still matches the brief's literal spec (role string or `undefined` while loading).
+
+Left `.claude/launch.json`'s port question untouched per the coordinator's instruction — that's
+escalated to the Owner, not the Builder's to resolve.
+
+Verification: `npx tsc --noEmit` and `npm run build` (frontend) both clean, `/dashboard` compiles
+(3.73 kB, 150 kB First Load JS — negligible size increase from Round 1). Re-ran
+`scratchpad/verify-dashboard-widgets.js` against local Postgres — identical output to Round 1
+(the data/aggregation logic itself didn't change, only error handling around it), confirming the
+fix didn't regress the happy path.
+
+**Live browser confirmation of the Must Fix (beyond the read-only script):** the dev-environment
+browser tab already carried an authenticated owner session from earlier work in this environment
+— no credentials were entered to get it. Navigating to `/dashboard` rendered the real
+`OwnerDashboard` (confirmed via the "Team" nav link, which `AppNav.tsx` only shows to
+owner/admin) and displayed **"Couldn't load dashboard data: Failed to fetch"** instead of hanging
+on "Loading…" — a genuine, unprompted trigger of exactly the failure mode Richard flagged.
+Root cause confirmed via `read_network_requests`: all 6 `GET` calls to `localhost:4000` failed
+with `net::ERR_FAILED` while their `OPTIONS` preflights returned `204` — a CORS mismatch, because
+`packages/backend/src/main.ts:6` defaults `FRONTEND_URL` to `http://localhost:3000` and the
+frontend is now running on 3010 (Round 1's port workaround). This is the escalated port question
+manifesting, not a new bug — left untouched per instruction — but it means the Must Fix got
+tested against a real failure in a real browser, not just a simulated one, and behaved exactly as
+intended: terminal, visible, no infinite spinner.
 
 ## Known Gaps
 *Logged here instead of fixed. Addressed in a future step.*
