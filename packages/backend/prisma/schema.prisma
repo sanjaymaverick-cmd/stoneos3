@@ -50,6 +50,7 @@ model Factory {
   inventorySnaps   InventorySnapshot[]
   utilityReadings  UtilityReading[]
   dailySalesSummaries DailySalesSummary[]
+  blockTransfersOut RawBlock[] @relation("BlockTransferSource")
 
   @@map("factory")
 }
@@ -150,6 +151,10 @@ model CuttingSession {
                                                           // before polishing/finishing added any value.
   wastageNotes   String?   @map("wastage_notes")
   createdAt      DateTime  @default(now()) @map("created_at")
+  isBackfilled   Boolean   @default(false) @map("is_backfilled")
+  // true when this session was reconstructed at opening-balance intake
+  // rather than started live — startedAt/machineId may be approximate,
+  // so throughput/runtime analytics should exclude or flag it.
 
   dayLogs         CuttingDayLog[]
   registeredSlabs Slab[]
@@ -204,6 +209,7 @@ model PolishingSession {
   operatorId          String?   @map("operator_id")
   notes               String?
   createdAt           DateTime  @default(now()) @map("created_at")
+  isBackfilled        Boolean   @default(false) @map("is_backfilled")
 
   slabs  PolishingSessionSlab[]
 
@@ -261,6 +267,26 @@ model RawBlock {
   currentStatus      String   @default("in_stock") @map("current_status")
   currentLocation    String?  @map("current_location")
   createdAt          DateTime @default(now()) @map("created_at")
+
+  entrySource      String    @default("purchase") @map("entry_source")
+  // purchase | opening_balance | transfer_in
+
+  costStatus       String    @default("pending") @map("cost_status")
+  // pending (normal purchase, invoice not yet entered)
+  // estimated (opening balance — approximate figure, not a real invoice)
+  // confirmed (reconciled to a real number)
+
+  sourceFactoryId  String?   @map("source_factory_id")
+  sourceFactory    Factory?  @relation("BlockTransferSource", fields: [sourceFactoryId], references: [id])
+
+  transferredFromBlockId String?    @map("transferred_from_block_id")
+  transferredFromBlock   RawBlock?  @relation("BlockTransferChain", fields: [transferredFromBlockId], references: [id])
+  transferredToBlocks    RawBlock[] @relation("BlockTransferChain")
+
+  reconciledAt     DateTime? @map("reconciled_at")
+  reconciledBy     String?   @map("reconciled_by")
+
+  reconciliations  BlockReconciliation[]
 
   photos       RawBlockPhoto[]
   transitions  BlockStateTransition[]
@@ -331,6 +357,9 @@ model Slab {
   currentLocation  String?  @map("current_location")
   salesStatus      String   @default("in_stock") @map("sales_status")
   createdAt        DateTime @default(now()) @map("created_at")
+  isBackfilled     Boolean  @default(false) @map("is_backfilled")
+  // true when registered directly as opening-balance/transfer-in stock
+  // rather than produced through a live cutting session.
 
   photos       SlabPhoto[]
   transitions  SlabStateTransition[]
@@ -365,6 +394,23 @@ model SlabStateTransition {
   occurredAt  DateTime @default(now()) @map("occurred_at")
 
   @@map("slab_state_transition")
+}
+
+// Append-only audit trail for corrections to estimated opening-balance
+// figures — same pattern as block_state_transition: never update or
+// delete rows, only insert.
+model BlockReconciliation {
+  id           String   @id @default(uuid())
+  rawBlockId   String   @map("raw_block_id")
+  rawBlock     RawBlock @relation(fields: [rawBlockId], references: [id])
+  fieldName    String   @map("field_name")   // e.g. "weight_tons", "invoiced_amount"
+  oldValue     String?  @map("old_value")
+  newValue     String   @map("new_value")
+  reconciledBy String   @map("reconciled_by")
+  reconciledAt DateTime @default(now()) @map("reconciled_at")
+  notes        String?
+
+  @@map("block_reconciliation")
 }
 
 model MachineRuntimeLog {
