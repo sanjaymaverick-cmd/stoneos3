@@ -113,9 +113,13 @@ the codebase — if you add one, you've broken tenant isolation.
 ## Next steps (suggested order)
 
 **Close out remaining gaps in what's already built:**
-1. Run `prisma/bootstrap.ts` FIRST (`OWNER_EMAIL=you@example.com npx ts-node prisma/bootstrap.ts`) — creates the factory, seeds B-21/LPM, grants you owner access, all in one step. Use `prisma/seed-machines.ts` later only if you add a second factory. **Still outstanding** — local Postgres has a placeholder `Factory` row (inserted just to satisfy the backfill script's foreign key) but zero `Machine` rows and no real Clerk-authenticated owner grant, so a real bootstrap run hasn't happened yet.
+1. ~~Run `prisma/bootstrap.ts`~~ — DONE (local Postgres). Reused the existing `Factory` row
+   rather than creating a duplicate (fixed `bootstrap.ts` to `findFirst`-then-create, so it's
+   now safe to re-run against a factory that already has backfilled data linked to it), seeded
+   B-21/LPM, granted `sanjay.maverick@gmail.com` owner access. Use `prisma/seed-machines.ts`
+   later only if you add a second factory.
 2. ~~User provisioning flow~~ — DONE, backend AND frontend. `/admin/users` page: grant-access form + team list, gated client-side via Clerk's `publicMetadata.role` (owner/admin only — real enforcement is still server-side via RolesGuard, the client check is just UX). "Team" link in nav only appears for owner/admin.
-3. Cost allocation for damaged slabs — `damagedSlabCount` is tracked but nothing yet values that loss against raw block cost (deliberately NOT finished slab price — see schema notes).
+3. ~~Cost allocation for damaged slabs~~ — DONE. `GET /raw-blocks/:id` returns a computed `damagedSlabLoss` object valuing damaged slabs at raw block purchase price (never finished slab price — see schema notes). Scoped to the detail endpoint only, not the list endpoint.
 4. Recovery ratio report (105 sqft/ton benchmark) — documented on `RawBlock` in the schema, not yet built as a live report. Must use sale-time sqft only.
 5. Per-slab dimension overrides for the rare mixed-size batch — completion currently assumes uniform size (true ~99% of the time).
 6. Item-level Tally detail (sqft per sales line) — not imported yet, would enable a direct cross-check against `sales_line_item`.

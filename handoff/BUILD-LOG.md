@@ -5,18 +5,27 @@
 
 ## Current Status
 
-**Active step:** none — Step 3 cleared, committed (`7057281`), nothing mid-flight.
+**Active step:** none — Step 3 cleared, nothing mid-flight.
 **Last cleared:** Step 3 — Richard's review found 0 Must Fix, 1 non-blocking Should Fix (logged
-in the Step 3 entry below, no code change needed) — Ready for Builder: YES — 2026-07-11.
-Committed to `main` locally same day. Step 2 was already committed earlier this session
-(`ab63693`) — also code-complete and reviewed clean (Richard's Round 2 re-review confirmed all
-3 Must Fix bugs genuinely fixed and `transfer_in` fully removed).
-**Pending deploy:** Step 1: production run OUT OF SCOPE for the team — Owner will run the
-historical backfill against any real environment himself, manually (2026-07-11 decision). Steps
-2 and 3 are committed to local `main` only — `main` is 7 commits ahead of `origin/main`, nothing
-pushed. No production environment exists for this project (2026-07-11 decision: the old AWS
-deployment, stoneos-db/ECS/ALB, is out of scope entirely — treat this as a fresh project with no
-existing production).
+below, no code change needed) — Ready for Builder: YES — 2026-07-11. Step 2 was reviewed clean
+earlier this session (Richard's Round 2 re-review confirmed all 3 Must Fix bugs genuinely fixed
+and `transfer_in` fully removed).
+**Repo:** `origin` is now `https://github.com/sanjaymaverick-cmd/stoneos3.git` (repointed
+2026-07-11 — the prior remote, `sos.git`, held the old out-of-scope AWS-deployment learning
+exercise). All local commits through `b0c75ea` are pushed and confirmed matching
+`origin/main`.
+**Bootstrap:** Run 2026-07-11 (`prisma/bootstrap.ts`, local Postgres) — `sanjay.maverick@gmail.com`
+granted owner access to the existing "Vedam Granites" factory (`4485c4f7-...`), B-21/LPM
+machines seeded. Fixed `bootstrap.ts` first to reuse an existing factory by name instead of
+unconditionally creating one — the factory row already existed (from Step 1's backfill) with
+2,421 Expense/514 DailySalesSummary rows linked to it, and running the script unmodified would
+have created a duplicate factory and orphaned that data from the owner grant. Verified directly
+against Postgres (not just script output): 1 factory, 2 machines, 1 app_user row, all correctly
+linked.
+**Pending deploy:** No production environment exists for this project — the old AWS deployment
+(stoneos-db/ECS/ALB under the old `sos` remote) is out of scope entirely (2026-07-11 decision).
+Historical-backfill execution against any future real environment is the Owner's own manual
+responsibility, not the team's.
 
 ---
 

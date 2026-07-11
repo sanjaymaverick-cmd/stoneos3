@@ -33,16 +33,30 @@ async function main() {
   }
   const clerkUser = users[0];
 
-  const factory = await prisma.factory.create({ data: { name: factoryName } });
-  console.log(`Created factory: ${factory.name} (${factory.id})`);
+  // Reuse an existing factory of this name rather than creating a duplicate —
+  // e.g. a factory row already created ahead of bootstrap (opening-balance/
+  // backfill data may already be linked to it, which a second factory row
+  // would silently orphan from the owner grant below).
+  let factory = await prisma.factory.findFirst({ where: { name: factoryName } });
+  if (factory) {
+    console.log(`Using existing factory: ${factory.name} (${factory.id})`);
+  } else {
+    factory = await prisma.factory.create({ data: { name: factoryName } });
+    console.log(`Created factory: ${factory.name} (${factory.id})`);
+  }
 
-  await prisma.machine.create({
-    data: { factoryId: factory.id, name: "B-21", machineType: "cutting", bladeCount: 21 },
-  });
-  await prisma.machine.create({
-    data: { factoryId: factory.id, name: "LPM", machineType: "polishing", headCount: 16, abrasivesPerHead: 6 },
-  });
-  console.log("Seeded B-21 (21 blades) and LPM (16 heads x 6 abrasives/head)");
+  const existingMachines = await prisma.machine.findMany({ where: { factoryId: factory.id } });
+  if (existingMachines.length === 0) {
+    await prisma.machine.create({
+      data: { factoryId: factory.id, name: "B-21", machineType: "cutting", bladeCount: 21 },
+    });
+    await prisma.machine.create({
+      data: { factoryId: factory.id, name: "LPM", machineType: "polishing", headCount: 16, abrasivesPerHead: 6 },
+    });
+    console.log("Seeded B-21 (21 blades) and LPM (16 heads x 6 abrasives/head)");
+  } else {
+    console.log(`Machines already exist for this factory (${existingMachines.map((m) => m.name).join(", ")}) — skipped seeding.`);
+  }
 
   await clerkClient.users.updateUserMetadata(clerkUser.id, {
     publicMetadata: { factoryId: factory.id, role: "owner" },
