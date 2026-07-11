@@ -11,10 +11,13 @@ fixed and `transfer_in` fully removed with no leftover cross-factory code — Re
 YES — 2026-07-11. Step 2 is code-complete and reviewed; not yet committed to git or deployed
 anywhere (per Owner's standing hold on AWS/production pushes and the disabled GitHub Actions
 workflow).
-**Pending deploy:** Step 1: production run NOT approved yet — separate, later gate. Step 2:
-migration applied to local Postgres only, reviewed clean, NOT committed/pushed — production RDS
-untouched by either step. Local dev DB retains Step 1's backfilled data (verified intact after
-Step 2's migration + smoke tests).
+**Pending deploy:** Step 1: production run OUT OF SCOPE for the team — Owner will run the
+historical backfill against any real environment himself, manually (2026-07-11 decision). Step
+2: migration applied to local Postgres only, reviewed clean, NOT committed/pushed — production
+RDS untouched by either step. Local dev DB retains Step 1's backfilled data (verified intact
+after Step 2's migration + smoke tests). Also per 2026-07-11 decision, the old AWS deployment
+(stoneos-db/ECS/ALB) is out of scope entirely — treat this as a fresh project with no existing
+production environment.
 
 ---
 

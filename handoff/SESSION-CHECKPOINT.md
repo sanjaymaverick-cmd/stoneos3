@@ -41,9 +41,9 @@ Project Owner wants to tackle next — nothing is mid-flight.
 
 ## Still Open
 
-- Production run of Step 1's backfill: not approved. Needs its own explicit go-ahead plus a
-  plan (backup timing, etc.) per `ARCHITECT.md`'s deploy gate — see `project-production-
-  deploy-hold` memory.
+- Production run of Step 1's backfill: OUT OF SCOPE for the team as of 2026-07-11 — Owner will
+  run it manually himself against any real environment. Nothing further needed from Arch/Bob
+  on this.
 - Whether/when to push the 4 local commits to GitHub at all — not decided, currently held.
 - KG-2 (dpr-daily follow-up: daily staff_salary granularity for a future step, if ever wanted)
   and KG-4/KG-7 (Richard's deferred Should Fix items from both steps) are logged but not

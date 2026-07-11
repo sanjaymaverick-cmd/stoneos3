@@ -123,7 +123,9 @@ the codebase — if you add one, you've broken tenant isolation.
 **Get to a real deployment — DONE, now LIVE (see `deploy/README.md`):**
 7. ~~Dockerfile~~ — DONE, both backend and frontend, multi-stage production builds.
 8. ~~AWS deployment~~ — DONE and LIVE on ECS Fargate + ALB + RDS in `ap-south-1`. CI/CD redeploys on every push to `main` via GitHub Actions (OIDC auth, no stored AWS keys). App Runner was the original plan but wasn't available on the account, so we run on ECS instead. Full details in [`deploy/README.md`](deploy/README.md).
-9. Backfill the historical data we now have in hand — the 3 Excel files (daily/yearly production, June balance sheet) and the validated Tally `daybook.xml`/`TrialBal.xml` — into the live database.
+9. ~~Backfill the historical data~~ — script built and confirmed against local Postgres
+   (`packages/backend/prisma/backfill-historical.ts`). Running it against any real/production
+   database is OUT OF SCOPE for the team — Owner does that manually himself.
 
 **The bigger one, once the above is live:**
 10. The AI Business Analyst / Copilot itself — the actual reason StoneOS exists, per the original spec. Everything so far has been the foundation (clean structured data, traceability, the semantic layer it needs to reason over). This hasn't been started yet, and it's the natural next phase once real data is flowing daily rather than sitting in our working files.
