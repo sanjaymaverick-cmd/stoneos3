@@ -17,5 +17,9 @@
     "@nestjs/core@10.4.22": true,
     "@prisma/client@5.22.0": true,
     "@prisma/engines@5.22.0": true
+  },
+  "overrides": {
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
   }
 }

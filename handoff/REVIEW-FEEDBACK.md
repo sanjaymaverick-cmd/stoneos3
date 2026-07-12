@@ -1,6 +1,95 @@
-# Review Feedback — Step 4 (Round 2)
-Date: 2026-07-11
+# Review Feedback — Step 5D — Next.js 15 → 16 upgrade
+Date: 2026-07-12
 Ready for Builder: YES
+
+## Must Fix
+None.
+
+## Should Fix
+- `packages/frontend/package.json` (indirect — `lucide-react@0.383.0` unchanged) /
+  `package-lock.json` — **The dependency tree has two live copies of React/React-DOM, and the
+  Definition of Done's "peer deps aligned" claim is not fully accurate.** `lucide-react@0.383.0`'s
+  own `peerDependencies` cap React at `^16.5.1 || ^17.0.0 || ^18.0.0` — it does not declare React
+  19 support. Because of that, npm could not hoist `react@19.2.7` to the workspace root: root
+  `node_modules/react` and `node_modules/react-dom` stay pinned at `18.3.1` (confirmed in
+  `package-lock.json`), and `19.2.7` only exists as a nested copy inside
+  `packages/frontend/node_modules/`. I verified with `require.resolve(..., {paths:[...]})` that
+  both `next` and `@clerk/nextjs` (both hoisted to root) resolve `react`/`react-dom` to the root
+  18.3.1 copy, not the 19.2.7 the upgrade intends. I confirmed this is not just a theoretical
+  resolution artifact: I ran `npm run build` myself and inspected `.next/standalone/**/node_modules`
+  — the traced production (standalone) server output only contains React **18.3.1**, no 19.2.7
+  copy anywhere. Bob's regression pass used `next dev` exclusively and never exercised the
+  `output: standalone` artifact (the mode this app is actually built for/deployed with, per his
+  own Open Question 4), so this was never observed.
+  - I did stress-test this myself beyond static analysis: started the built standalone
+    `server.js` directly and curled `/sign-in` — got a clean `200` with real Clerk-rendered
+    markup and no error/digest/stack-trace in the response body, and no warnings in the server's
+    stdout/stderr. So this is **not an active break today** — Next 16's bundler appears to
+    canonicalize React consistently enough for this app's actual surface — but it is a real,
+    verifiable gap between "React 19" as claimed and what's actually wired into the tree, and a
+    landmine for a future change (a new dependency, a lucide-react bump, or a Clerk
+    component that behaves differently across React majors) to turn into a genuine "Invalid
+    hook call" production incident. Recommend logging this explicitly in `handoff/BUILD-LOG.md`
+    Known Gaps so it isn't rediscovered from scratch later, and see the Escalate item below for
+    the actual fix decision.
+  - Not blocking this step's merge given the standalone-server smoke test above came back clean,
+    but it should be disclosed, not silently absorbed into a "peer deps aligned" checkmark.
+- `handoff/REVIEW-REQUEST.md` / `handoff/BUILD-LOG.md` — the regression pass and Definition-of-Done
+  checklist both test/claim against `next dev` and `next build` only. For an app whose
+  `next.config.js` sets `output: "standalone"` (the actual deploy artifact), a future upgrade step
+  should include at least one smoke check against the built standalone server (as I did above),
+  not just `next dev` — recommend adding this as a standing item to the regression-pass template
+  the team already uses for future major-version bumps.
+
+## Escalate to Architect
+- **How to resolve `lucide-react`'s React-19 peer gap** (see Should Fix above) — this is a scope
+  decision, not something I can resolve at the code level, and the brief explicitly forbids
+  "unrelated dependency bumps" for this step:
+  - Option A: bump `lucide-react` to latest (`1.24.0`, confirmed via `npm view` to declare
+    `react: "^16.5.1 || ^17.0.0 || ^18.0.0 || ^19.0.0"` peer support) — but `0.383.0` → `1.24.0`
+    is itself a major-version jump with its own possible breaking icon-API changes, clearly out
+    of this step's scope, and would need its own review pass.
+  - Option B: add a root `package.json` `overrides` entry forcing `react`/`react-dom` to
+    `19.2.7` tree-wide, collapsing the dual copies without touching `lucide-react`'s declared
+    version at all. Mechanically simpler, but is itself a "dependency configuration change beyond
+    the strict bump" the brief didn't anticipate — worth a one-line sign-off either way.
+  - Option C: accept the current dual-copy state as-is (empirically working per my standalone-
+    server smoke test) and defer to a future dedicated `lucide-react` upgrade step.
+  None of these are urgent — the app works today by my own testing — but someone with product/
+  scope authority should pick one rather than the situation staying implicit.
+
+## Cleared
+- **Clerk/Next-16 compatibility independently confirmed** — not taken on faith. Read the
+  *installed* `@clerk/nextjs@7.5.15` package.json directly: `peerDependencies.next` =
+  `"^15.2.8 || ^15.3.8 || ^15.4.10 || ^15.5.9 || ^15.6.0-0 || ^16.0.10 || ^16.1.0-0"`. Verified
+  with npm's own `semver.satisfies('16.2.10', <that range>)` → `true` (caret range on a nonzero
+  major extends through the next major, so `^16.0.10` covers `16.2.10`). Same check for React:
+  `peerDependencies.react`/`react-dom` = `"^18.0.0 || ~19.0.3 || ~19.1.4 || ~19.2.3 || ~19.3.0-0"`,
+  and `19.2.7` satisfies `~19.2.3`. Bob's changelog-based claim holds up against the actual
+  installed package metadata.
+- `git diff --stat` confirms only `packages/frontend/` files, `package-lock.json` (root), and
+  `handoff/*.md` changed — nothing under `packages/backend/`.
+- `package.json` diff is exactly `next`, `react`, `react-dom`, plus new `@types/react-dom` — no
+  other dependency moved (`lucide-react`, `@clerk/nextjs`, `@types/react`, tailwind/postcss/
+  autoprefixer all untouched).
+- `.claude/launch.json` has zero diff and zero git-status entry in this worktree — Bob's claim
+  that he didn't touch it, and that `preview_start`'s `name` launcher resolves to the outer repo
+  (not this worktree), checks out. `packages/frontend/.clerk/` is present but correctly
+  git-ignored by the new `packages/frontend/.gitignore` (`/.clerk/`), matching Bob's description.
+- Ran `npx tsc --noEmit` and `npm run build` myself in this worktree — both clean, all 9 routes
+  compiled, matching Bob's reported output exactly (same route list, same ○/ƒ markers).
+- `handoff/BUILD-LOG.md`'s Step 5D regression-pass section lists all 9 brief-mandated routes
+  individually with real per-route results (not a vague "everything works"), including the
+  transient first-compile race that was investigated and ruled out with a specific retest —
+  this is a genuine per-route account.
+- `tsconfig.json` diff (`moduleResolution: node→bundler`, `jsx: preserve→react-jsx`, `.next/dev/
+  types/**/*.ts` added to `include`) matches exactly what Next 16's own tooling applies
+  automatically; `next-env.d.ts`'s single-line change is the expected auto-regenerated content.
+
+---
+
+# Step 4 (Round 2)
+*Preserved below for the full trail.*
 
 ---
 
