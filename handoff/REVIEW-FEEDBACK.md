@@ -1,6 +1,94 @@
-# Review Feedback — Step 4 (Round 2)
-Date: 2026-07-11
+# Review Feedback — Step 5A (Recovery ratio report)
+Date: 2026-07-12
 Ready for Builder: YES
+
+## Must Fix
+None.
+
+## Should Fix
+- `packages/frontend/app/reports/recovery-ratio/page.tsx:79` — Empty-state message uses an
+  inline style block (`color: #857c6c`, `font-family: IBM Plex Mono, monospace`) instead of a
+  shared CSS class, because no `.empty-state` class exists in `globals.css` yet. Bob flagged
+  this himself in REVIEW-REQUEST.md. Not worth blocking on — the colors/fonts are correctly
+  reused, it's just duplicated inline rather than extracted. If a second report page needs an
+  empty state, extract a `.empty-state` class then; not worth doing solely for this one page.
+  Log to BUILD-LOG if not addressed now.
+
+## Escalate to Architect
+- Route path naming — Bob used `/reports/recovery-ratio` (frontend) taken from the brief's own
+  "e.g." example, nested under a `/reports/` namespace that has no other precedent in this
+  codebase (every other page — `/sales`, `/expenses`, `/dpr`, `/polishing` — is flat). Low-risk
+  either way and a one-line change if Arch wants it flattened to `/recovery-ratio` for
+  consistency, but this is a navigation/IA convention decision, not something I should decide at
+  the code level. Bob already flagged this in REVIEW-REQUEST.md's Open Questions.
+
+## Cleared — independent verification performed
+
+**(a) Route ordering** — Read `raw-block.controller.ts` directly (not just Bob's summary).
+`@Get("recovery-ratio")` is declared at line 20, `@Get(":id")` at line 25 — the specific route
+is genuinely first in declaration order, so Nest will match it before falling through to the
+`:id` handler. Confirmed via `git diff` that this is a pure insertion between the existing
+`@Get()` and `@Get(":id")` — nothing about the existing `:id` route was altered.
+
+**(b) Multi-tenant scoping** — `findRecoveryRatios(factoryId)` calls
+`this.prisma.rawBlock.findMany({ where: { factoryId }, ... })` — same scoping shape as the
+existing `findAll`/`findOne`. The controller passes `user.factoryId` (from `@CurrentUser()`),
+never a client-supplied id. `slabs`/`salesLines` are pulled via Prisma `include` off the
+already-`factoryId`-filtered `RawBlock` rows (relation traversal via `parentBlockId`/`slabId`
+FKs, not a second independent query), so there is no path for another factory's slabs or sales
+lines to enter the result. Confirmed `RawBlock.slabs` in `schema.prisma` (line 293) is the
+correct inverse of `Slab.parentBlockId` (line 331-332), and `Slab.salesLines` (line 366) is the
+correct inverse of `SalesLineItem.slabId` (line 552-553). No global/unscoped query anywhere in
+the new code.
+
+**(c) Null-handling correctness** — Hand-verified the logic in `computeRecoveryRatio`
+(`raw-block.service.ts:128-145`):
+- `recoveryRatio = weightTons != null && weightTons > 0 && soldSqft > 0 ? soldSqft / weightTons : null`
+  — correctly `null` (not `0`/`NaN`) when `weightTons` is null, when `weightTons` is `0`, and
+  when `soldSqft` is `0`. No division-by-zero path exists.
+- `belowBenchmark = recoveryRatio != null ? recoveryRatio < benchmark : null` — correctly `null`
+  exactly when `recoveryRatio` is `null`, never `false` as a stand-in.
+- `soldSqft = block.slabs.reduce((sum, slab) => sum + slab.salesLines.reduce((s, line) => s +
+  Number(line.quantity), 0), 0)` — this is a nested reduce across *every* slab on the block and
+  *every* sales line on each slab, not just the first slab or first line. Confirmed against
+  schema: `SalesLineItem.slabId` is nullable (`schema.prisma:552`), and because the query
+  navigates `block → slabs → salesLines` (the inverse relation), a `SalesLineItem` with a null
+  `slabId` is structurally unreachable from this path and correctly never contributes — matches
+  the brief's "handle gracefully" instruction without needing an explicit filter.
+
+**(d) `GET /raw-blocks/:id` / `computeDamagedSlabLoss` untouched** — `git diff HEAD --
+raw-block.service.ts raw-block.controller.ts` shows a purely additive diff: the new
+`findRecoveryRatios`/`computeRecoveryRatio` block and the new controller route are pure
+insertions. `findOne` (service) and `computeDamagedSlabLoss` are byte-for-byte identical to
+before.
+
+**(e) `schema.prisma` untouched** — Not present in `git status`/`git diff` output for this
+worktree; confirmed no schema or migration changes.
+
+**Build verification (independently run, not just trusting Bob's claim):**
+- Backend: `npx prisma generate` (required once, fresh worktree, matches Bob's note) →
+  `npx tsc --noEmit` clean, `npm run build` (`nest build`) clean, no errors.
+- Frontend: `npx tsc --noEmit` clean, `npm run build` clean — `✓ Compiled successfully`, all 11
+  routes generated including `/reports/recovery-ratio` at `1.71 kB, 148 kB First Load JS`,
+  matching Bob's reported numbers exactly.
+
+**Other checks:**
+- `AppNav.tsx` diff is exactly the one line described (`{ href: "/reports/recovery-ratio",
+  label: "Recovery Ratio" }` appended to the unconditional `LINKS` array) — no role-gating
+  added or removed elsewhere.
+- Frontend page follows the established `apiFetch(path, token)` / `safeGetToken(getToken)`
+  pattern from `lib/api.ts` correctly; no new fetch library introduced.
+- Badge classes `.badge.invoiced`, `.badge.cash`, `.badge.mixed` all exist in `globals.css`
+  (lines 126-128) with the colors Bob described (moss/rust/brass) — no new CSS introduced.
+- `BUILD-LOG.md` was updated with a Step 5A entry consistent with REVIEW-REQUEST.md; the
+  existing `Known Gaps` section was not touched.
+- No drift found — nothing was added beyond what the brief asked for (no date-range filtering,
+  no charting library, no extra routes).
+
+---
+
+# Step 4 (Round 2)
+*Preserved below for the full trail.*
 
 ---
 

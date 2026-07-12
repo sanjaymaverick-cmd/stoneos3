@@ -5,7 +5,10 @@
 
 ## Current Status
 
-**Active step:** none — Step 4 cleared, nothing mid-flight.
+**Active step:** Step 5A — Recovery ratio report — BUILT, AWAITING REVIEW (built in isolated
+worktree `worktrees/recovery-ratio-report`, branch `feat/recovery-ratio-report`, running in
+parallel with three other independent steps in sibling worktrees not covered by this log entry
+until they merge back).
 **Last cleared:** Step 4 — Richard's Round 2 re-review found 0 Must Fix (Ready for Builder: YES,
 2026-07-11); one more tiny non-blocking gap he flagged (token fetch not covered by the
 try/finally) was closed directly by the Architect rather than a third Bob round-trip. Verified
@@ -386,6 +389,83 @@ frontend is now running on 3010 (Round 1's port workaround). This is the escalat
 manifesting, not a new bug — left untouched per instruction — but it means the Must Fix got
 tested against a real failure in a real browser, not just a simulated one, and behaved exactly as
 intended: terminal, visible, no infinite spinner.
+
+### Step 5A — Recovery ratio report — BUILT, AWAITING REVIEW
+*Date: 2026-07-12. Built in isolated worktree `worktrees/recovery-ratio-report`,
+branch `feat/recovery-ratio-report`.*
+
+Files changed:
+- `packages/backend/src/modules/inventory/raw-block.service.ts` — new `findRecoveryRatios(factoryId)`
+  method + private `computeRecoveryRatio` helper, following the `computeDamagedSlabLoss` pattern
+  from Step 3.
+- `packages/backend/src/modules/inventory/raw-block.controller.ts` — new `GET /raw-blocks/recovery-ratio`
+  route, declared before `GET(":id")`.
+- `packages/frontend/app/reports/recovery-ratio/page.tsx` (new) — read-only table page.
+- `packages/frontend/components/AppNav.tsx` — added a "Recovery Ratio" nav link (unconditional,
+  not role-restricted).
+
+Decisions made:
+- `soldSqft` computed by navigating `block → slabs → salesLines` (the inverse of
+  `SalesLineItem.slabId`) rather than a raw `salesLineItem.findMany` scan — this makes the
+  brief's "null slabId rows must not crash/contribute" requirement automatically true by
+  construction (a null-slabId line item can never be any slab's inverse relation), no extra
+  filtering code needed.
+- Response shape flattens `soldSqft`/`recoveryRatio`/`benchmark`/`belowBenchmark` directly onto
+  each returned block object (not nested under a sub-key) — matches the brief's Definition of
+  Done wording exactly, a deliberate deviation from `computeDamagedSlabLoss`'s nested-object
+  precedent from Step 3.
+- `recoveryRatio` is `null` when `weightTons` is null/0 OR `soldSqft` is 0 (a block with nothing
+  sold yet reports no ratio, not a ratio of 0) — `belowBenchmark` is `null` in lockstep.
+- Frontend reuses existing `.badge` classes semantically rather than adding new CSS: `invoiced`
+  (moss/green) = on-or-above benchmark, `cash` (rust/red) = below benchmark, `mixed` (brass/amber)
+  = no sales yet. No new colors/fonts introduced, per the brief.
+- Route path chosen: `/reports/recovery-ratio` (frontend) / `GET /raw-blocks/recovery-ratio`
+  (backend) — both taken directly from the brief's own example paths since nothing in the
+  existing codebase contradicts them (no pre-existing `/reports/*` convention to check against).
+
+Verification:
+- `npm install` from the worktree root (workspaces: `packages/backend`, `packages/frontend`) —
+  clean, 466 packages.
+- `npx prisma generate` (backend) — was required before `tsc`/`build` would pass; the fresh
+  worktree's `node_modules` didn't have a generated Prisma Client yet (unrelated to this step's
+  code, just a fresh-checkout prerequisite).
+- `npx tsc --noEmit` — clean in both `packages/backend` and `packages/frontend`.
+- `npm run build` — clean in both packages; `/reports/recovery-ratio` appears in the Next.js
+  build output as a static route (1.71 kB, 148 kB First Load JS).
+- No database connection attempted at any point (worktree has no reachable local Postgres in
+  this context, and no production DB exists for this project) — correctness reasoned through by
+  reading `schema.prisma` and the existing `computeDamagedSlabLoss`/`findOne` code instead, per
+  instruction. The brief notes local Postgres's `raw_block` table is currently empty (Step 4's
+  precedent) — the frontend page's empty-state path (`loaded && blocks.length === 0`) was
+  written and reviewed by hand for this exact scenario, not exercised live.
+
+Open questions for Richard: none blocking — see REVIEW-REQUEST.md for the two non-blocking notes
+(route path naming, no existing empty-state CSS class) already flagged in the Builder Plan.
+
+#### Step 5A Round 2 — Richard's review + Architect's direct fix
+*Date: 2026-07-12*
+
+Richard's review found 0 Must Fix, 0 Escalate blocking the merge (`Ready for Builder: YES`).
+Independently confirmed (by reading the actual controller/service code and diff, not taking
+Bob's summary on faith): route ordering (`recovery-ratio` genuinely declared before `:id`),
+null-handling (`recoveryRatio`/`belowBenchmark` both `null` in lockstep exactly when expected,
+`soldSqft` genuinely sums every slab/every sales line), multi-tenant scoping, and that
+`computeDamagedSlabLoss`/`schema.prisma` are byte-for-byte untouched. One Should Fix (inline
+empty-state styling, non-blocking) and one Escalate: the `/reports/recovery-ratio` route path
+introduces a nesting convention with no precedent elsewhere in the app (every other page is
+flat — `/sales`, `/expenses`, `/dpr`).
+
+Architect's call (technical/navigation-convention decision, not a product-behavior change):
+flattened to `/recovery-ratio` for consistency with every other existing page. Fixed directly
+(moved `page.tsx`, deleted the stale `app/reports/` directory, updated `AppNav.tsx`'s link)
+rather than a Bob round-trip for a two-line change, matching Step 4's precedent for
+Architect-closed tiny gaps. Re-verified after the fix: cleared stale `.next` build cache,
+re-ran `npx tsc --noEmit` (clean) and `npm run build` (clean) — `/recovery-ratio` now appears
+as a flat static route (1.71 kB, 148 kB First Load JS) in the build output.
+
+**Step 5A is CLEARED — awaiting Owner go-ahead to merge.**
+
+---
 
 ## Known Gaps
 *Logged here instead of fixed. Addressed in a future step.*
