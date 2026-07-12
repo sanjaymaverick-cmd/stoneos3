@@ -624,6 +624,7 @@ model TallyImportBatch {
 
   ledgerEntries      TallyLedgerEntry[]
   trialBalanceRows   TallyTrialBalanceSnapshot[]
+  voucherItems       TallyVoucherItem[]
 
   @@map("tally_import_batch")
 }
@@ -640,6 +641,23 @@ model TallyLedgerEntry {
   narration             String?
 
   @@map("tally_ledger_entry")
+}
+
+// Voucher-level stock-item detail from the Day Book export — a different
+// granularity than TallyLedgerEntry (one row per stock item per voucher,
+// vs. one row per ledger account line). See Step 5C brief for why this is
+// separate rather than folded into TallyLedgerEntry.
+model TallyVoucherItem {
+  id                  String           @id @default(uuid())
+  tallyImportBatchId  String           @map("tally_import_batch_id")
+  batch               TallyImportBatch @relation(fields: [tallyImportBatchId], references: [id])
+  voucherType         String?          @map("voucher_type")
+  entryDate           DateTime?        @map("entry_date") @db.Date
+  stockItemName       String?          @map("stock_item_name")
+  quantity            Decimal?         @db.Decimal(12, 2)
+  amount              Decimal?         @db.Decimal(14, 2)
+
+  @@map("tally_voucher_item")
 }
 
 model TallyTrialBalanceSnapshot {

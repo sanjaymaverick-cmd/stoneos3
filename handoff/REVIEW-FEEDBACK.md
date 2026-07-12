@@ -1,6 +1,127 @@
-# Review Feedback — Step 4 (Round 2)
-Date: 2026-07-11
+# Review Feedback — Step 5C: Item-level Tally detail
+Date: 2026-07-12
 Ready for Builder: YES
+
+---
+
+## Must Fix
+None.
+
+---
+
+## Should Fix
+
+- `packages/backend/prisma/migrations/20260712000000_tally_voucher_item/migration.sql` — Bob
+  hand-wrote this because "no reachable `DATABASE_URL` exists in this worktree." I tested that
+  claim: `npx prisma migrate diff --from-empty --to-schema-datamodel=prisma/schema.prisma
+  --script` runs to completion in this same DB-less worktree with **no DATABASE_URL and no live
+  Postgres connection at all** — it's a pure schema-to-SQL compile, not a live diff. I ran it and
+  extracted the `tally_voucher_item` `CREATE TABLE`/`AddForeignKey` section from the output; it is
+  byte-for-byte identical to Bob's hand-written file (same column order, same types, same FK
+  clause, same `-- CreateTable`/`-- AddForeignKey` comment lines). So the migration content is
+  correct — verified, not just trusted. But the *reasoning* in REVIEW-REQUEST.md ("no DB, so must
+  hand-write") is not accurate, and hand-transcription is a strictly more failure-prone path than
+  running the tool, even when no live DB is reachable. Recommendation: log to BUILD-LOG that
+  `migrate diff --from-empty --to-schema-datamodel --script` is available and should be the
+  first-choice fallback (not hand-writing) whenever `--from-url` isn't available in a future
+  worktree with no DB access. (Note: it produces the full-schema DDL from scratch, not an
+  incremental diff against migration history — `--from-migrations` would give the incremental
+  form but requires `--shadow-database-url`, which does need a DB — so for a DB-less worktree,
+  `--from-empty` + manually isolating the new table's section, as I did here, is the right
+  pattern.) Not blocking — the SQL itself is confirmed correct this time.
+
+- `TallyImportController.itemCrossCheck` / `TallyImportService.itemCrossCheck`
+  (`tally-import.controller.ts:31-35`, `tally-import.service.ts:273-303`) — `from`/`to` are
+  checked only for presence (`!from || !to`), not for being parseable dates. A malformed value
+  (e.g. `?from=banana&to=2026-07-01`) produces `new Date("banana")` → `Invalid Date`, which will
+  reach the Prisma query and most likely surface as an unhandled 500 rather than a clean
+  `BadRequestException`. Low severity given this is an internal diagnostic endpoint the brief says
+  is fine to hit via curl/Postman, not a user-facing flow, but worth a one-line `isNaN` guard if
+  Bob touches this file again.
+
+---
+
+## Escalate to Architect
+
+- **Sales-voucher-type filter specificity** (Bob's open question 3, `tally-import.service.ts:281`)
+  — `voucherType: { equals: "Sales", mode: "insensitive" }` may not match a real Tally
+  installation's actual voucher-type strings (e.g. "Sales - Local", "Sales - GST"). Bob flagged
+  this transparently and I can't resolve it either without a real export — genuine product/data
+  decision, not a code defect. Recommend leaving as `equals` until the Owner's manual real-data
+  verification pass reports the actual `voucherType` strings, rather than guessing at `contains`
+  now (a `contains` guess is no more grounded than `equals`).
+
+- **Quantity field precedence** (Bob's open question 4, `parseTallyQuantity(inv?.ACTUALQTY ??
+  inv?.BILLEDQTY)`, `tally-import.service.ts:144`) — `ACTUALQTY` preferred over `BILLEDQTY` is an
+  unverified assumption about which field this Tally installation populates. Same category as
+  above: needs the Owner's real-export verification pass, not a reviewer-level code decision.
+
+Both of these are already flagged clearly and prominently by Bob in REVIEW-REQUEST.md and
+BUILD-LOG.md — escalating for Arch/Owner awareness, not because Bob hid or softened them.
+
+---
+
+## Independent verification performed (per review brief's scrutiny points)
+
+**(a) Hand-written migration vs. `tally_ledger_entry` precedent** — confirmed. Column order,
+`DATE`/`DECIMAL(12,2)`/`DECIMAL(14,2)` types, and `ON DELETE RESTRICT ON UPDATE CASCADE` FK style
+all match `20260709122654_init/migration.sql`'s `tally_ledger_entry` table exactly. Beyond that, I
+independently regenerated the DDL via `prisma migrate diff --from-empty --to-schema-datamodel
+--script` (confirmed this runs without any DB connection) and diffed it against Bob's file byte
+for byte — identical. See Should Fix above for the one process note (the "no DB" justification for
+hand-writing wasn't quite right, even though the output happened to be correct).
+
+**(b) `parseDaybook` return-shape change and zero-regression claim** — confirmed by hand via
+`git diff` on `tally-import.service.ts`, not by trusting Bob's summary. Grepped the full repo for
+`parseDaybook` callers: exactly one (`TallyImportService.importDaybook`), and it was updated to
+destructure `{ lines, items }`. Read the diff directly: the existing `for (const le of allEntries)
+{ ... lines.push({...}) }` block (now at lines 122-135) has **zero changed lines** — every field
+(`voucherType`, `entryDate`, `account`, `debit`, `credit`, `narration`) and the debit/credit sign
+logic are untouched. All new code (the `items` array, the `parseTallyQuantity` helper, the second
+`for (const inv of inventoryEntries)` loop) is additive, appended after the existing loop closes.
+The only change to the existing loop's surroundings is the wrapper return statement (`return
+lines` → `return { lines, items }`). Ledger-line output is genuinely byte-for-byte unchanged, not
+"probably fine."
+
+**Multi-tenant scoping** — confirmed. `TallyImportController` has class-level
+`@UseGuards(ClerkAuthGuard)` (covers the new endpoint too), and `itemCrossCheck` scopes both
+queries by the caller's `factoryId`: `tallyVoucherItem.aggregate({ where: { batch: { factoryId },
+... } })` and `salesLineItem.aggregate({ where: { salesOrder: { factoryId, ... } } })`. The direct
+`SalesOrder.factoryId` scoping matches the existing pattern in `sales-order.service.ts`
+(`findAll`/`findOne` both filter `where: { factoryId }` directly) — Bob's deviation from the
+brief's suggested customer/factory relation path is a reasonable simplification, not a scoping
+gap.
+
+**Real-data-not-verified disclosure** — confirmed clearly and prominently stated, not buried.
+REVIEW-REQUEST.md leads with a dedicated "Important upfront: real-data verification is NOT done"
+section before the file-by-file changes. BUILD-LOG.md repeats it in its own "Verification"
+subsection with the same explicit wording. Both also enumerate exactly which Tally tag names are
+inferred vs. verified, per the brief's explicit ask.
+
+**Build verification** — ran independently, not trusted from Bob's claim:
+- `npx tsc --noEmit` in `packages/backend` — clean, exit code 0.
+- `npm run build` (`nest build`) in `packages/backend` — clean, no errors/warnings.
+- `npx prisma generate` — clean; confirmed `TallyVoucherItem`/`tallyVoucherItem` compiles
+  correctly against the generated client (implicit in the clean `tsc` pass, which uses the new
+  model in `tally-import.service.ts`).
+
+**Scope/drift check** — `git diff --stat` shows exactly the files Bob's REVIEW-REQUEST.md lists
+(`schema.prisma`, `tally-import.controller.ts`, `tally-import.service.ts`, the new migration, plus
+the two handoff docs) — no undisclosed files touched, no frontend changes despite the frontend
+`npm run build` having been run as an extra check.
+
+## Cleared
+
+Schema addition, hand-written migration DDL (independently re-verified byte-for-byte against a
+tool-generated equivalent), parser extension and its zero-regression claim on existing ledger-line
+output, transactional storage of both ledger entries and voucher items, and the
+`item-cross-check` endpoint's multi-tenant scoping were all reviewed and passed; `tsc --noEmit`
+and `npm run build` were independently re-run and are clean.
+
+---
+
+# Step 4 (Round 2)
+*Preserved below for the full trail.*
 
 ---
 
