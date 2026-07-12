@@ -39,6 +39,11 @@ interface CompleteSessionInput {
   lengthFt?: number;
   widthFt?: number;
   thicknessMm?: number;
+  // Opt-in escape hatch for the rare mixed-size batch — a few slabs came out a
+  // different size. `sequence` matches the generation loop's 1-based `seq` (same
+  // numbering used to build slabSerial). Any of the three left unset on a given
+  // override falls back to the session-level default above.
+  slabOverrides?: { sequence: number; lengthFt?: number; widthFt?: number; thicknessMm?: number }[];
   wastageNotes?: string;
 }
 
@@ -128,6 +133,27 @@ export class CuttingSessionService {
     if (input.finalGoodSlabCount > input.totalSlabsCut) {
       throw new BadRequestException("finalGoodSlabCount cannot exceed totalSlabsCut");
     }
+
+    // Rare mixed-size batch: a few slabs came out a different size than the
+    // session default. Validate up front, before touching the DB, so a bad
+    // request never partially applies.
+    const overridesBySeq = new Map<number, NonNullable<CompleteSessionInput["slabOverrides"]>[number]>();
+    if (input.slabOverrides && input.slabOverrides.length > 0) {
+      const seenSequences = new Set<number>();
+      for (const override of input.slabOverrides) {
+        if (!Number.isInteger(override.sequence) || override.sequence < 1 || override.sequence > input.finalGoodSlabCount) {
+          throw new BadRequestException(
+            `slabOverrides sequence ${override.sequence} must be an integer between 1 and ${input.finalGoodSlabCount}`,
+          );
+        }
+        if (seenSequences.has(override.sequence)) {
+          throw new BadRequestException(`slabOverrides sequence ${override.sequence} is duplicated`);
+        }
+        seenSequences.add(override.sequence);
+        overridesBySeq.set(override.sequence, override);
+      }
+    }
+
     const session = await this.prisma.cuttingSession.findFirstOrThrow({
       where: { id: sessionId, factoryId },
       include: { rawBlock: true },
@@ -165,6 +191,7 @@ export class CuttingSessionService {
       const createdSlabs = [];
       for (let seq = 1; seq <= input.finalGoodSlabCount; seq++) {
         const slabSerial = `${session.rawBlock.serialNumber}/${input.totalSlabsCut}/${String(seq).padStart(2, "0")}`;
+        const override = overridesBySeq.get(seq);
         const slab = await tx.slab.create({
           data: {
             factoryId,
@@ -172,9 +199,9 @@ export class CuttingSessionService {
             cuttingSessionId: session.id,
             slabSerial,
             varietyName: session.rawBlock.varietyName,
-            lengthFt: input.lengthFt,
-            widthFt: input.widthFt,
-            thicknessMm: input.thicknessMm ?? 18.0,
+            lengthFt: override?.lengthFt ?? input.lengthFt,
+            widthFt: override?.widthFt ?? input.widthFt,
+            thicknessMm: override?.thicknessMm ?? input.thicknessMm ?? 18.0,
           },
         });
         createdSlabs.push(slab);

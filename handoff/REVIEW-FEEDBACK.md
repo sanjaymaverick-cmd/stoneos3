@@ -87,6 +87,107 @@ worktree; confirmed no schema or migration changes.
 
 ---
 
+# Review Feedback — Step 5B — Per-slab dimension overrides
+Date: 2026-07-12
+Ready for Builder: YES
+
+## Must Fix
+None.
+
+## Should Fix
+- `packages/backend/src/modules/production/cutting-session.service.ts:143-154` — `slabOverrides[i].sequence`
+  is validated (integer, range, uniqueness), but `lengthFt`/`widthFt`/`thicknessMm` inside each override
+  are never type/range-checked (no rejection of negative, NaN-producing, or non-numeric values before
+  they reach `tx.slab.create`). This is not a regression — the pre-existing session-level
+  `input.lengthFt`/`widthFt`/`thicknessMm` have the identical gap, and this file has no class-validator
+  anywhere — but the override array multiplies the number of attacker/typo-controlled numeric fields per
+  request (up to `finalGoodSlabCount` sets instead of one). Not blocking; log to BUILD-LOG as a
+  pre-existing pattern this step extends, worth a project-wide pass later.
+
+## Escalate to Architect
+None.
+
+## Cleared
+
+**Files reviewed:** `packages/backend/src/modules/production/cutting-session.service.ts` (full diff vs.
+`HEAD~1`) and `packages/frontend/app/dpr/page.tsx` (full diff vs. `HEAD~1`), plus confirmation that
+`packages/backend/prisma/schema.prisma` has zero diff and that no files outside the two listed were
+touched (`git status` / `git diff --stat` against `HEAD~1`).
+
+**Default-path-unchanged claim — independently confirmed, not just trusted.** Hand-traced the actual
+diff hunk (not Bob's paraphrase of it):
+- Before: `lengthFt: input.lengthFt, widthFt: input.widthFt, thicknessMm: input.thicknessMm ?? 18.0`
+- After: `lengthFt: override?.lengthFt ?? input.lengthFt, widthFt: override?.widthFt ?? input.widthFt,
+  thicknessMm: override?.thicknessMm ?? input.thicknessMm ?? 18.0`, with `override = overridesBySeq.get(seq)`.
+
+When `input.slabOverrides` is absent/empty, `overridesBySeq` is built as an empty `Map` (guarded by
+`if (input.slabOverrides && input.slabOverrides.length > 0)` at line 141), so `override` is `undefined`
+for every `seq` in the loop. `undefined?.lengthFt` short-circuits to `undefined` via optional chaining
+on the `override` variable itself (not a property access on a defined object), so `undefined ?? input.lengthFt`
+evaluates to exactly `input.lengthFt` — same for `widthFt`. For `thicknessMm`, the chain collapses to
+exactly `input.thicknessMm ?? 18.0`, the same two-step fallback as before. Confirmed byte-identical to
+the pre-change code for the default path.
+
+**Validation runs before `$transaction` opens.** The `overridesBySeq` construction and both
+`BadRequestException` throws (lines 140-155) execute before `this.prisma.$transaction(...)` is called
+(line 167). The only work between validation and the transaction is two read-only calls
+(`findFirstOrThrow`, status check) — no writes occur before or after validation failure, so a bad
+request cannot leave partial writes.
+
+**Sequence validation edge cases — all correctly rejected, traced by hand against the actual code:**
+- `sequence: 0` — fails `override.sequence < 1` → 400.
+- `sequence: finalGoodSlabCount + 1` — fails `override.sequence > input.finalGoodSlabCount` → 400.
+- `sequence: 3.5` (non-integer) — fails `!Number.isInteger(override.sequence)` → 400.
+- `sequence: NaN` / `Infinity` — `Number.isInteger` returns `false` for both → 400.
+- Duplicate `sequence` (e.g. two entries with `sequence: 3`) — second occurrence hits
+  `seenSequences.has(override.sequence)` → 400, thrown before the first is ever added to `overridesBySeq`
+  in a way that would mask the duplicate.
+
+**Frontend toggle defaults off and sends no `slabOverrides` key on the default path.**
+`slabOverridesEnabled` initializes as `{}`, so `slabOverridesEnabled[s.id]` is `undefined` and
+`!!undefined` renders the checkbox unchecked. In `submitCompletion` (page.tsx:167),
+`overrides = slabOverridesEnabled[sessionId] ? buildSlabOverrides(...) : []`, and the request body
+spreads `...(overrides.length > 0 ? { slabOverrides: overrides } : {})` (line 177) — when off, `overrides`
+is `[]`, so the spread contributes nothing and `slabOverrides` is genuinely absent from the JSON body,
+not sent as `[]`. Checked whether that distinction matters to the backend: it does not — the backend's
+guard at line 141 is `if (input.slabOverrides && input.slabOverrides.length > 0)`, which treats
+`undefined` and `[]` identically (both skip straight to an empty `Map`). No discrepancy either way.
+
+**No `schema.prisma` changes** — confirmed via `git diff HEAD~1 -- packages/backend/prisma/schema.prisma`,
+zero output.
+
+**No scope drift** — `git status`/`git diff --stat` against `HEAD~1` show only
+`cutting-session.service.ts`, `dpr/page.tsx`, and the three `handoff/*.md` files changed. No touch to
+`raw-block.service.ts`, `computeDamagedSlabLoss`, or anything sales/expense-related, matching the brief's
+explicit flag. The frontend diff is purely additive (new state, new helper functions, new JSX block) —
+none of the pre-existing dimension-input JSX or the pre-existing request-body fields
+(`totalSlabsCut`/`finalGoodSlabCount`/`lengthFt`/`widthFt`/`thicknessMm`/`wastageNotes`) were touched.
+
+**Mixed-size path traced by hand** (finalGoodSlabCount=5, override `{sequence:3, lengthFt:7.5}`): seq 3
+resolves to `lengthFt: 7.5` (from override) with `widthFt`/`thicknessMm` falling through to session
+defaults (override's fields are `undefined` for those two); seq 1,2,4,5 all get pure session defaults via
+the empty-lookup path. Matches spec.
+
+**`buildSlabOverrides` (frontend) diff-only-payload logic verified**: a row whose parsed value equals the
+parsed session default (whether because it was never touched, or because the supervisor typed the same
+value back) is excluded field-by-field; an entry is only pushed when at least one field's parsed value
+differs from the corresponding session default. `row-card`/`row-grid` CSS classes exist in `globals.css`
+(reused from the existing `sales/page.tsx` pattern, no new design system introduced).
+
+**Independent build verification** — ran directly in this worktree, not taken from Bob's report:
+- `npx tsc --noEmit` in `packages/backend` — clean, zero output.
+- `npx tsc --noEmit` in `packages/frontend` — clean, zero output.
+- `npm run build` in `packages/backend` (`nest build`) — clean, zero output.
+- `npm run build` in `packages/frontend` (`next build`) — compiled successfully, own lint/type pass
+  passed, all 10 routes generated including `/dpr` at exactly 5.14 kB / 151 kB First Load JS — matches
+  Bob's reported numbers exactly.
+
+One sentence: reviewed the full backend/frontend diffs against `HEAD~1`, independently re-derived (not
+just trusted) the default-path-identical claim and all validation edge cases by hand-tracing the actual
+code, confirmed no schema changes and no scope drift, and independently reproduced clean `tsc`/build
+results in both packages — step is clear to ship, with one non-blocking Should Fix logged for later.
+
+
 # Step 4 (Round 2)
 *Preserved below for the full trail.*
 

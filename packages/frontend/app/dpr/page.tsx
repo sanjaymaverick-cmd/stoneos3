@@ -39,6 +39,11 @@ export default function ProductionPage() {
   const [showCompleteFor, setShowCompleteFor] = useState<string | null>(null);
   const [completedResults, setCompletedResults] = useState<Record<string, any>>({});
 
+  // Opt-in per-slab dimension overrides — rare mixed-size batch. Off by default;
+  // when off the completion request is identical to the single-dimension-set path.
+  const [slabOverridesEnabled, setSlabOverridesEnabled] = useState<Record<string, boolean>>({});
+  const [slabOverrideRows, setSlabOverrideRows] = useState<Record<string, Record<number, any>>>({});
+
   const loadAll = async () => {
     const token = await safeGetToken(getToken);
     if (!token) return;
@@ -114,6 +119,39 @@ export default function ProductionPage() {
   const updateCompletion = (sessionId: string, field: string, val: string) =>
     setCompletionForm((f) => ({ ...f, [sessionId]: { ...f[sessionId], [field]: val } }));
 
+  const updateSlabOverrideRow = (sessionId: string, seq: number, field: string, val: string) =>
+    setSlabOverrideRows((rows) => ({
+      ...rows,
+      [sessionId]: { ...rows[sessionId], [seq]: { ...rows[sessionId]?.[seq], [field]: val } },
+    }));
+
+  // Builds the minimal slabOverrides payload — only sequences whose values actually
+  // differ from the session-level default make it in, and only the differing fields.
+  const buildSlabOverrides = (sessionId: string, finalGoodSlabCount: number) => {
+    const f = completionForm[sessionId] ?? {};
+    const defaults = {
+      lengthFt: f.lengthFt ? parseFloat(f.lengthFt) : undefined,
+      widthFt: f.widthFt ? parseFloat(f.widthFt) : undefined,
+      thicknessMm: f.thicknessMm ? parseFloat(f.thicknessMm) : undefined,
+    };
+    const overrides: { sequence: number; lengthFt?: number; widthFt?: number; thicknessMm?: number }[] = [];
+    for (let seq = 1; seq <= finalGoodSlabCount; seq++) {
+      const row = slabOverrideRows[sessionId]?.[seq] ?? {};
+      const entry: { sequence: number; lengthFt?: number; widthFt?: number; thicknessMm?: number } = { sequence: seq };
+      let differs = false;
+      (["lengthFt", "widthFt", "thicknessMm"] as const).forEach((field) => {
+        const raw = row[field];
+        const parsed = raw !== undefined && raw !== "" ? parseFloat(raw) : undefined;
+        if (parsed !== undefined && !Number.isNaN(parsed) && parsed !== defaults[field]) {
+          entry[field] = parsed;
+          differs = true;
+        }
+      });
+      if (differs) overrides.push(entry);
+    }
+    return overrides;
+  };
+
   const submitCompletion = async (sessionId: string) => {
     const f = completionForm[sessionId] ?? {};
     if (!f.totalSlabsCut || !f.finalGoodSlabCount) {
@@ -125,19 +163,24 @@ export default function ProductionPage() {
     try {
       const token = await getToken();
       if (!token) throw new Error("not authenticated");
+      const finalGoodSlabCount = parseInt(f.finalGoodSlabCount);
+      const overrides = slabOverridesEnabled[sessionId] ? buildSlabOverrides(sessionId, finalGoodSlabCount) : [];
       const result = await apiFetch(`/cutting-sessions/${sessionId}/complete`, token, {
         method: "POST",
         body: JSON.stringify({
           totalSlabsCut: parseInt(f.totalSlabsCut),
-          finalGoodSlabCount: parseInt(f.finalGoodSlabCount),
+          finalGoodSlabCount,
           lengthFt: f.lengthFt ? parseFloat(f.lengthFt) : undefined,
           widthFt: f.widthFt ? parseFloat(f.widthFt) : undefined,
           thicknessMm: f.thicknessMm ? parseFloat(f.thicknessMm) : undefined,
           wastageNotes: f.wastageNotes || undefined,
+          ...(overrides.length > 0 ? { slabOverrides: overrides } : {}),
         }),
       });
       setCompletedResults((r) => ({ ...r, [sessionId]: result }));
       setShowCompleteFor(null);
+      setSlabOverridesEnabled((m) => ({ ...m, [sessionId]: false }));
+      setSlabOverrideRows((rows) => ({ ...rows, [sessionId]: {} }));
       await loadAll();
       setStatus("saved");
       setTimeout(() => setStatus("idle"), 2500);
@@ -279,6 +322,56 @@ export default function ProductionPage() {
                   …/{String(completionForm[s.id].finalGoodSlabCount).padStart(2, "0")}.
                 </p>
               )}
+              {(() => {
+                const fgCount = parseInt(completionForm[s.id]?.finalGoodSlabCount ?? "");
+                if (!fgCount || fgCount < 1) return null;
+                return (
+                  <div style={{ marginTop: 10 }}>
+                    <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, cursor: "pointer" }}>
+                      <input
+                        type="checkbox"
+                        checked={!!slabOverridesEnabled[s.id]}
+                        onChange={(e) => setSlabOverridesEnabled((m) => ({ ...m, [s.id]: e.target.checked }))}
+                      />
+                      different sizes for some slabs?
+                    </label>
+                    {slabOverridesEnabled[s.id] && (
+                      <div style={{ marginTop: 8, maxHeight: 320, overflowY: "auto", paddingRight: 4 }}>
+                        {Array.from({ length: fgCount }, (_, i) => i + 1).map((seq) => (
+                          <div className="row-card" key={seq}>
+                            <div style={{ fontSize: 11, fontWeight: 700, color: "var(--brass-dark)", marginBottom: 6 }}>
+                              Slab #{String(seq).padStart(2, "0")}
+                            </div>
+                            <div className="row-grid">
+                              <label className="field"><span className="field-label">Length (ft)</span>
+                                <input
+                                  className="field-input"
+                                  value={slabOverrideRows[s.id]?.[seq]?.lengthFt ?? completionForm[s.id]?.lengthFt ?? ""}
+                                  onChange={(e) => updateSlabOverrideRow(s.id, seq, "lengthFt", e.target.value)}
+                                />
+                              </label>
+                              <label className="field"><span className="field-label">Width (ft)</span>
+                                <input
+                                  className="field-input"
+                                  value={slabOverrideRows[s.id]?.[seq]?.widthFt ?? completionForm[s.id]?.widthFt ?? ""}
+                                  onChange={(e) => updateSlabOverrideRow(s.id, seq, "widthFt", e.target.value)}
+                                />
+                              </label>
+                              <label className="field"><span className="field-label">Thickness (mm)</span>
+                                <input
+                                  className="field-input"
+                                  value={slabOverrideRows[s.id]?.[seq]?.thicknessMm ?? completionForm[s.id]?.thicknessMm ?? ""}
+                                  onChange={(e) => updateSlabOverrideRow(s.id, seq, "thicknessMm", e.target.value)}
+                                />
+                              </label>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
               <div style={{ marginTop: 10, display: "flex", justifyContent: "flex-end" }}>
                 <button className="primary-btn" onClick={() => submitCompletion(s.id)} disabled={status === "saving"}>
                   <Check size={14} /> Confirm Completion
