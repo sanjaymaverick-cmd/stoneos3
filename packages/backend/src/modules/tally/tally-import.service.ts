@@ -25,6 +25,32 @@ interface ParsedLedgerLine {
   narration: string;
 }
 
+interface ParsedVoucherItem {
+  voucherType: string;
+  entryDate: Date;
+  stockItemName: string;
+  quantity: number | null;
+  amount: number | null;
+}
+
+interface ParsedDaybook {
+  lines: ParsedLedgerLine[];
+  items: ParsedVoucherItem[];
+}
+
+// Tally quantity fields (ACTUALQTY / BILLEDQTY) are formatted as a string
+// combining a signed number and a unit, e.g. "2260 SQF" or "-12.5 Nos" —
+// this pulls just the leading numeric part out. Returns null if nothing
+// numeric is found (rather than 0, so a missing quantity isn't confused
+// with a genuine zero).
+function parseTallyQuantity(raw: unknown): number | null {
+  if (raw === undefined || raw === null) return null;
+  const match = String(raw)
+    .trim()
+    .match(/^-?\d+(\.\d+)?/);
+  return match ? parseFloat(match[0]) : null;
+}
+
 interface ParsedTrialBalanceRow {
   account: string;
   debit: number;
@@ -50,12 +76,15 @@ export class TallyParserService {
   //      invariant against a real export first (run
   //      prisma/validate-tally-parser.js).
   //
-  // Deliberately NOT parsing item/stock-item level detail (e.g. "POLISHED
-  // GRANITE SLABS, 2260 SQF") beyond what's needed to reach the ledger
-  // amount — that's richer than our current tally_ledger_entry schema
-  // models. Worth a future enhancement (e.g. cross-checking sqft sold
-  // against StoneOS's own sales_line_item), but out of scope here.
-  parseDaybook(buffer: Buffer): ParsedLedgerLine[] {
+  // Item/stock-item level detail (e.g. "POLISHED GRANITE SLABS, 2260 SQF")
+  // is additionally extracted below into ParsedVoucherItem — see
+  // TallyVoucherItem / Step 5C. STOCKITEMNAME/ACTUALQTY/BILLEDQTY are
+  // inferred from Tally's documented item-invoice-mode XML shape, NOT
+  // verified against a real export (no sample file available in this repo
+  // — see prisma/validate-tally-parser.js's docstring). Only
+  // ALLINVENTORYENTRIES.LIST / ACCOUNTINGALLOCATIONS.LIST / LEDGERNAME /
+  // AMOUNT are verified, per the comment block above.
+  parseDaybook(buffer: Buffer): ParsedDaybook {
     const xml = decodeTallyXml(buffer);
     const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "@_" });
     const doc = parser.parse(xml);
@@ -67,6 +96,7 @@ export class TallyParserService {
     const messages = Array.isArray(rawMessages) ? rawMessages : [rawMessages];
 
     const lines: ParsedLedgerLine[] = [];
+    const items: ParsedVoucherItem[] = [];
     for (const msg of messages) {
       const voucher = msg?.VOUCHER;
       if (!voucher) continue;
@@ -103,12 +133,35 @@ export class TallyParserService {
           narration: String(narration),
         });
       }
+
+      // Item/stock-item level detail — one ParsedVoucherItem per inventory
+      // entry, reusing the same `inventoryEntries` array structure 3 above
+      // already traverses. amount reuses that entry's own accounting
+      // allocation total rather than re-deriving it.
+      for (const inv of inventoryEntries) {
+        const stockItemName = inv?.STOCKITEMNAME;
+        if (!stockItemName) continue;
+        const quantity = parseTallyQuantity(inv?.ACTUALQTY ?? inv?.BILLEDQTY);
+        const allocations = asArray(inv?.["ACCOUNTINGALLOCATIONS.LIST"]);
+        const amountValues = allocations
+          .map((a: any) => a?.AMOUNT)
+          .filter((a: any) => a !== undefined && String(a).trim() !== "")
+          .map((a: any) => parseFloat(String(a)));
+        const amount = amountValues.length > 0 ? amountValues.reduce((sum: number, a: number) => sum + a, 0) : null;
+        items.push({
+          voucherType: String(voucherType),
+          entryDate,
+          stockItemName: String(stockItemName),
+          quantity,
+          amount,
+        });
+      }
     }
 
     if (lines.length === 0) {
       throw new BadRequestException("Parsed the file but found zero ledger entries — check it's an unmodified Tally export");
     }
-    return lines;
+    return { lines, items };
   }
 
   // TRIAL BALANCE — this export's shape is a flat, strictly alternating
@@ -156,7 +209,7 @@ export class TallyImportService {
   }
 
   async importDaybook(factoryId: string, fileBuffer: Buffer, sourceFile: string) {
-    const lines = this.parser.parseDaybook(fileBuffer);
+    const { lines, items } = this.parser.parseDaybook(fileBuffer);
     const dates = lines.map((l) => l.entryDate.getTime());
 
     return this.prisma.$transaction(async (tx) => {
@@ -179,7 +232,17 @@ export class TallyImportService {
           narration: l.narration,
         })),
       });
-      return { batch, entriesImported: lines.length };
+      await tx.tallyVoucherItem.createMany({
+        data: items.map((i) => ({
+          tallyImportBatchId: batch.id,
+          voucherType: i.voucherType,
+          entryDate: i.entryDate,
+          stockItemName: i.stockItemName,
+          quantity: i.quantity,
+          amount: i.amount,
+        })),
+      });
+      return { batch, entriesImported: lines.length, itemsImported: items.length };
     });
   }
 
@@ -198,5 +261,44 @@ export class TallyImportService {
       });
       return { batch, accountsImported: rows.length };
     });
+  }
+
+  // Diagnostic cross-check: sqft sold per Tally's Day Book (item-level,
+  // Sales-type vouchers only) vs. sqft sold per StoneOS's own
+  // SalesLineItem rows, for the same date range and factory. Not a full
+  // reconciliation UI — just enough to spot a large drift. See Step 5C
+  // brief: "Sales" voucher-type matching is an inferred guess (Tally
+  // voucher-type names are configurable per company), not verified against
+  // a real export.
+  async itemCrossCheck(factoryId: string, from: string, to: string) {
+    const fromDate = new Date(from);
+    const toDate = new Date(to);
+
+    const tallyAgg = await this.prisma.tallyVoucherItem.aggregate({
+      where: {
+        batch: { factoryId },
+        entryDate: { gte: fromDate, lte: toDate },
+        voucherType: { equals: "Sales", mode: "insensitive" },
+      },
+      _sum: { quantity: true },
+    });
+
+    const stoneosAgg = await this.prisma.salesLineItem.aggregate({
+      where: {
+        salesOrder: { factoryId, orderDate: { gte: fromDate, lte: toDate } },
+      },
+      _sum: { quantity: true },
+    });
+
+    const tallySqft = Number(tallyAgg._sum.quantity ?? 0);
+    const stoneosSqft = Number(stoneosAgg._sum.quantity ?? 0);
+
+    return {
+      from,
+      to,
+      tallySqft,
+      stoneosSqft,
+      delta: tallySqft - stoneosSqft,
+    };
   }
 }

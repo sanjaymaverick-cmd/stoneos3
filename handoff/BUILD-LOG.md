@@ -5,10 +5,10 @@
 
 ## Current Status
 
-**Active step:** Step 5A — Recovery ratio report — BUILT, AWAITING REVIEW (built in isolated
-worktree `worktrees/recovery-ratio-report`, branch `feat/recovery-ratio-report`, running in
-parallel with three other independent steps in sibling worktrees not covered by this log entry
-until they merge back).
+**Active step:** none — Steps 5A, 5B, 5C all cleared and merged 2026-07-12 (built in parallel in
+isolated worktrees `worktrees/recovery-ratio-report`, `worktrees/slab-dimension-overrides`,
+`worktrees/tally-item-detail`). Step 5D (Next.js 15→16 upgrade) still in review in its own
+worktree, `worktrees/nextjs-16-upgrade` — merges last per plan.
 **Last cleared:** Step 4 — Richard's Round 2 re-review found 0 Must Fix (Ready for Builder: YES,
 2026-07-11); one more tiny non-blocking gap he flagged (token fetch not covered by the
 try/finally) was closed directly by the Architect rather than a third Bob round-trip. Verified
@@ -390,6 +390,7 @@ manifesting, not a new bug — left untouched per instruction — but it means t
 tested against a real failure in a real browser, not just a simulated one, and behaved exactly as
 intended: terminal, visible, no infinite spinner.
 
+<<<<<<< HEAD
 ### Step 5A — Recovery ratio report — BUILT, AWAITING REVIEW
 *Date: 2026-07-12. Built in isolated worktree `worktrees/recovery-ratio-report`,
 branch `feat/recovery-ratio-report`.*
@@ -520,6 +521,117 @@ Verification (no live DB, per this run's instructions):
 
 Open questions: none — logged in the Builder Plan section of `handoff/ARCHITECT-BRIEF.md`, brief
 was unambiguous on both backend and frontend shape.
+
+#### Step 5B Round 2 — Richard's review
+*Date: 2026-07-12*
+
+Richard's review found 0 Must Fix (`Ready for Builder: YES`). Independently hand-traced the
+default (no-override) path against the actual pre-change diff (not Bob's paraphrase) and
+confirmed it collapses to byte-identical behavior; confirmed validation runs entirely before the
+transaction opens; confirmed all sequence-validation edge cases (0, out-of-range, non-integer,
+duplicate) correctly reject with 400; confirmed the frontend toggle defaults off and the default
+submission omits `slabOverrides` entirely. One non-blocking Should Fix logged (override dimension
+values aren't type/range-validated — mirrors a pre-existing gap elsewhere in this file, not a new
+hole). Zero Escalate items.
+
+**Step 5B is CLEARED — merged 2026-07-12.**
+
+---
+
+### Step 5C — Item-level Tally detail — BUILT, AWAITING REVIEW
+*Date: 2026-07-12. Worktree: `worktrees/tally-item-detail`, branch `feat/tally-item-detail`.*
+
+Files changed:
+- `packages/backend/prisma/schema.prisma` — added `TallyVoucherItem` model (id, batch relation,
+  voucherType, entryDate, stockItemName, quantity `Decimal(12,2)`, amount `Decimal(14,2)`) and
+  the inverse `voucherItems TallyVoucherItem[]` relation on `TallyImportBatch`.
+- `packages/backend/prisma/migrations/20260712000000_tally_voucher_item/migration.sql` (new) —
+  hand-written, NOT generated via `prisma migrate diff` (no reachable `DATABASE_URL` in this
+  worktree — no `.env`, `localhost:5432` connection refused). Written to match
+  `20260709122654_init/migration.sql`'s DDL conventions for the sibling `tally_ledger_entry`
+  table exactly (column order, `DATE`/`DECIMAL(12,2)`/`DECIMAL(14,2)` types, FK with
+  `ON DELETE RESTRICT ON UPDATE CASCADE`). **Needs a real `migrate diff` run to confirm once a
+  DB is reachable — flagged in REVIEW-REQUEST.**
+- `packages/backend/src/modules/tally/tally-import.service.ts` — `TallyParserService.parseDaybook`
+  now additionally extracts `ParsedVoucherItem[]` from the same `ALLINVENTORYENTRIES.LIST` array
+  structure 3 already traverses, reusing that entry's own `ACCOUNTINGALLOCATIONS.LIST` amount
+  rather than re-deriving it. Added `parseTallyQuantity()` helper to strip the numeric prefix off
+  Tally's `"2260 SQF"`-style quantity strings. Return type changed from `ParsedLedgerLine[]` to
+  `{ lines, items }` — the *ledger line* array/loop/values are byte-for-byte unchanged, only the
+  wrapper shape changed (the only caller, `importDaybook`, was updated to match; no other callers
+  exist in the repo — grepped). `TallyImportService.importDaybook` now also does
+  `tx.tallyVoucherItem.createMany(...)` in the same transaction and returns `itemsImported`
+  alongside `entriesImported`. Added `TallyImportService.itemCrossCheck(factoryId, from, to)` —
+  sums `TallyVoucherItem.quantity` for Sales-type vouchers (via `batch.factoryId`) vs.
+  `SalesLineItem.quantity` for `SalesOrder`s in range (via `SalesOrder.factoryId` directly, same
+  scoping style as `SalesOrderService`), returns `{ from, to, tallySqft, stoneosSqft, delta }`.
+- `packages/backend/src/modules/tally/tally-import.controller.ts` — added
+  `GET /tally-import/item-cross-check?from&to`, 400s if either param is missing.
+
+Decisions made / flagged as guesses (per brief's explicit instruction to be honest about this):
+- `STOCKITEMNAME`, `ACTUALQTY`, `BILLEDQTY` tag names are inferred from Tally's documented
+  item-invoice-mode XML shape — **not verified** against a real export or against the existing
+  code's own verified-tag comment block (which only covers
+  `ALLINVENTORYENTRIES.LIST`/`ACCOUNTINGALLOCATIONS.LIST`/`LEDGERNAME`/`AMOUNT`).
+  `parseTallyQuantity` prefers `ACTUALQTY`, falls back to `BILLEDQTY` — an assumption about which
+  field is more reliably present; unverified.
+- `itemCrossCheck`'s Sales-voucher filter uses `voucherType: { equals: "Sales", mode:
+  "insensitive" }` — a guess. Real Tally installations can use custom voucher-type names (e.g.
+  "Sales - Local"); this may need to become a `contains`/`startsWith` or a configurable list once
+  checked against the real export.
+- `SalesOrder` already carries `factoryId` directly (not only via `customer`), so the cross-check
+  scopes `SalesLineItem` through `salesOrder: { factoryId, orderDate: {...} }` directly —
+  simpler than the brief's suggested customer/factory relation path, same end result.
+- Migration hand-written rather than tool-generated (see above) — this is a deviation from the
+  brief's stated preference and should be double-checked with a real `migrate diff` before this
+  merges anywhere with DB access.
+
+Verification:
+- `npm install` from worktree root — clean (466 packages).
+- `npx prisma generate` — clean, `TallyVoucherItem` present in the generated client.
+- `npx tsc --noEmit` — clean in both `packages/backend` and `packages/frontend`.
+- `npm run build` — clean in both `packages/backend` and `packages/frontend` (frontend build has
+  no source changes this step; ran it anyway to confirm nothing else in the monorepo regressed).
+- **Real Tally-data verification NOT done** — no real Tally XML export file exists in this repo
+  or worktree (confirmed per the brief's constraint — `prisma/validate-tally-parser.js` takes the
+  file as an external CLI arg). Reasoned through the additive-only claim by inspection instead:
+  the new item-extraction loop reads additional fields off the same already-traversed
+  `inventoryEntries` array inside the existing `for (const msg of messages)` loop, and pushes to
+  a new, separate `items` array; the existing `lines` push/loop body was not touched. This is the
+  Owner's own manual step — running an extended `validate-tally-parser.js` (or a live
+  `importDaybook` call) against his actual Tally export.
+- No database contact of any kind — no `.env` exists, `migrate dev`/`db push`/seed scripts were
+  not run, and no attempt was made to reach a local or production Postgres instance.
+
+Open questions for Richard:
+1. Is the hand-written migration SQL acceptable to merge as-is (flagged as unverified vs. tool
+   output), or should this step be blocked until someone with a reachable local DB re-generates
+   it via `prisma migrate diff` and diffs the two?
+2. Is `voucherType: { equals: "Sales", mode: "insensitive" }` the right level of specificity for
+   the cross-check filter, or should it be broadened (`contains`) given real Tally voucher-type
+   names are configurable per company and unverified here?
+3. `parseDaybook`'s return type changed shape (`ParsedLedgerLine[]` → `{ lines, items }`) — flagged
+   in case that's considered a bigger deviation than intended by "keep this additive."
+
+#### Step 5C Round 2 — Richard's review
+*Date: 2026-07-12*
+
+Richard's review found 0 Must Fix (`Ready for Builder: YES`). Independently re-derived rather
+than trusted: (a) regenerated the hand-written migration via `npx prisma migrate diff --from-empty
+--to-schema-datamodel=prisma/schema.prisma --script` with zero DB connection required — result was
+byte-for-byte identical to Bob's hand-written SQL, so the migration is correct even though the
+stated justification for hand-writing it (no reachable DB) wasn't quite accurate as a *reason* to
+skip the tool; (b) grepped for every caller of `parseDaybook` (exactly one, `importDaybook`,
+correctly updated) and read the raw diff directly — the ledger-line-producing loop has zero
+changed lines, confirming the additive-only claim by inspection rather than faith. Also confirmed
+multi-tenant scoping on the new endpoint and that the real-data-verification-NOT-done disclosure
+is prominent, not buried. Two Should Fix items (migration justification wording;
+`from`/`to` param format validation on the cross-check endpoint) and two Escalate items — the
+Sales-voucher-type filter and quantity-field precedence — both genuinely unverifiable without a
+real Tally export, carried forward as the Owner's own manual verification step alongside the
+migration double-check.
+
+**Step 5C is CLEARED — merged 2026-07-12.**
 
 ---
 
