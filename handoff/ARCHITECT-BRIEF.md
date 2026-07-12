@@ -4,110 +4,142 @@
 
 ---
 
-## Step 4 — Owner/Admin role-based dashboard
+## Step 5A — Recovery ratio report (README #4)
 
-Frontend only. No backend changes, no new endpoints — everything below is buildable from
-existing GET endpoints. `packages/frontend/app/dashboard/page.tsx` is currently a literal
-placeholder (`TODO — role-based dashboard shell`) — this step fills it in for the owner/admin
-role only. Other roles keep seeing today's placeholder unchanged — do not build views for
-other roles this step (scope decision, Owner-confirmed: owner/admin first, others later).
+You are working in an isolated git worktree on branch `feat/recovery-ratio-report`. This is
+running in parallel with three other independent steps (each in their own worktree) — do not
+assume anything about their state, do not touch files outside what this brief describes.
 
-### Visual direction (Owner-confirmed)
-REFINE the existing "quarry ledger" identity — do not re-skin. Reuse `app/globals.css`'s
-existing classes (`.ticket`, `.stamp`, `.badge`, `.mini-btn`, `.list-table`, `.mono`, the
-brass/stone/graphite palette, Space Grotesk + IBM Plex Mono) so the dashboard looks like it
-belongs with `/sales`/`/expenses`, not like a bolted-on new design system. New CSS is fine
-where needed (e.g. a stat-card class for KPI numbers) but must extend the existing palette/
-fonts, not introduce new ones. Light, functional micro-interactions are welcome (e.g. a fade-in
-on load, a subtle hover on stat cards) — skip anything decorative that doesn't communicate
-state. Do not touch the visual design of any OTHER existing page in this step.
+### What this is
+`RawBlock` in `packages/backend/prisma/schema.prisma` (see the comment block right above
+`model RawBlock`, ~line 247) documents a recovery-ratio metric that was never built as a live
+report:
 
-### Role detection
-No `useRole()` hook exists yet — every page currently re-reads `user?.publicMetadata?.role`
-inline (see `AppNav.tsx`). Add one reusable hook (e.g. `packages/frontend/lib/useRole.ts`,
-your call on exact location matching this codebase's `lib/` conventions) since this is now the
-second place needing it — return the role string (or `undefined` while Clerk is still
-loading). Use it in `dashboard/page.tsx` to branch: owner/admin → the widgets below;
-everything else → the existing placeholder message, unchanged.
+> actual sqft sold (sum of `SalesLineItem.quantity` across all slabs where `parentBlockId` =
+> this block) divided by `weightTons`. Benchmark: 105 sqft per ton of rough block. Below 105 =
+> below-target yield; above 105 = good efficiency. Must use SALE-TIME sqft only — never
+> `Slab.lengthFt`/`widthFt`, which are provisional production-stage placeholders.
 
-### Widgets (all from existing endpoints — verify exact response shapes yourself before
-building, don't assume field names)
-1. **Sales summary, trailing 30 days** — `GET /daily-sales-summary?from&to` (from = today-30,
-   to = today). Sum `totalQtySqft`, `invoicedAmount`, `actualAmountReceived` across the range.
-   Show as 3 stat numbers.
-2. **Expense summary, trailing 30 days** — `GET /expenses?from&to`, same range. Total amount,
-   plus a small breakdown by `category` (top 4-5 categories by sum is enough — don't build a
-   chart library integration, a simple sorted list/mini-bar with existing CSS is fine).
-3. **What's on the machines right now** — `GET /cutting-sessions/active` (already filters to
-   `status: "in_progress"`, includes `rawBlock` + `dayLogs`). One card per active session:
-   block serial number, variety, days running (`startedAt` to now). Empty state if none active.
-4. **Raw block stock snapshot** — `GET /raw-blocks`, group client-side by `currentStatus`, show
-   as counts (e.g. "12 in stock, 2 in cutting, 5 polished, 30 sold").
-5. **Recent activity** — small combined list: last 5 sales orders (`GET /sales-orders`, sort by
-   `orderDate` desc, slice) and last 5 expenses (`GET /expenses`, sort by `expenseDate` desc,
-   slice) — two short lists side by side or stacked, your call on layout, matching `.list-table`
-   styling.
+Build this as a real, live-computed report. No new schema/migration needed — everything it
+needs already exists (`RawBlock.weightTons`, `Slab.parentBlockId`, `SalesLineItem.quantity`
+joined via `SalesLineItem.slabId → Slab.id`).
 
-### Build pattern (match existing pages exactly — see `sales/page.tsx`, `expenses/page.tsx`)
-- `"use client"`, `useAuth()` from `@clerk/nextjs`, `apiFetch`/`safeGetToken` from
-  `lib/api.ts` — do not introduce a new fetch pattern, no SWR/React Query.
-- `useEffect(() => { load() }, [])` on mount, `safeGetToken` (not raw `getToken`) for reads.
-- No shared data-fetching hook exists in this codebase yet — don't add one for this step either
-  (each widget's `load()` can call multiple endpoints in the same effect); that's a bigger
-  refactor out of scope here.
-- `/expenses` and `/sales-orders` have no server-side date filtering in current frontend usage
-  (expenses supports `?from&to` server-side, sales-orders doesn't) — for widget 5 (recent
-  activity) just fetch unfiltered and slice/sort client-side, matching how `expenses/page.tsx`
-  already computes totals client-side today.
+### Backend
+Add to `packages/backend/src/modules/inventory/raw-block.service.ts` and
+`raw-block.controller.ts` (follow the existing `computeDamagedSlabLoss` pattern in the same
+service file for style — private helper + a controller route that calls it):
+
+- New method, e.g. `findRecoveryRatios(factoryId: string)`, returns every `RawBlock` for the
+  factory with a computed object per block:
+  - `soldSqft` — sum of `SalesLineItem.quantity` across all `SalesLineItem` rows whose `slab`
+    has `parentBlockId = block.id`. Use a Prisma query that joins through `Slab` (e.g.
+    `slab.findMany({ where: { parentBlockId }, include: { salesLines: true } })` and sum
+    client-side, or an aggregate — your call, match the `Number(x)` Decimal-to-number
+    conversion pattern already used elsewhere in this file, no `.toNumber()`).
+  - `recoveryRatio` — `soldSqft / weightTons`, `null` if `weightTons` is null or 0, or if
+    `soldSqft` is 0 (a block with nothing sold yet has no ratio to report, not a ratio of 0).
+  - `benchmark: 105`, `belowBenchmark: boolean | null` (`null` when `recoveryRatio` is null).
+- New route: `GET /raw-blocks/recovery-ratio` — **must be declared BEFORE the existing
+  `GET(":id")` route** in the controller, or Nest will match `/raw-blocks/recovery-ratio` as
+  `GET(":id")` with `id = "recovery-ratio"` and it will silently 404/error against Prisma
+  instead of hitting your new handler. This is the one thing in this brief most likely to bite
+  you — double check route order after adding it.
+- Scope to `user.factoryId` exactly like every other query in this file (multi-tenant
+  enforcement — no exceptions, see README's "Multi-tenant enforcement" section).
+
+### Frontend
+Add a new page, e.g. `packages/frontend/app/reports/recovery-ratio/page.tsx`. Follow the
+existing build pattern exactly (see `sales/page.tsx`/`expenses/page.tsx`): `"use client"`,
+`useAuth()` + `apiFetch`/`safeGetToken` from `lib/api.ts`, `useEffect` on mount, no new fetch
+library. Reuse existing `globals.css` classes (`.ticket`, `.list-table`, `.badge`, `.mono`,
+the brass/stone/graphite palette) — do not introduce new colors/fonts. A simple table (block
+serial, variety, weight tons, sold sqft, recovery ratio, a badge/color cue for below-benchmark)
+is enough — no charting library. Add a nav link in `components/AppNav.tsx` (this page is not
+role-restricted — any authenticated user can view it, unlike `/admin/users`).
+
+Local Postgres currently has an empty `raw_block` table — the page should render a correct
+empty state, not an error. That's expected, not a bug (same situation Step 4 hit).
 
 ### Flags
-- Don't build the recovery-ratio report or any new backend aggregate endpoint this step — if a
-  widget above turns out to need one you didn't expect, stop and flag it in the review request
-  rather than building backend changes unbriefed.
-- Don't build role views for accountant/manager/supervisor/operator/auditor this step — those
-  come later, one at a time, per Owner's explicit "Owner/Admin first" scope decision.
-- `MachineRuntimeLog` has no GET endpoint (write-only) — don't attempt a "machine runtime
-  today" widget, it's not buildable without new backend work (logged as a future Known Gap,
-  not this step).
-- `GET /dpr` only takes a single `date`, not a range — don't attempt a DPR trend widget this
-  step for the same reason.
+- Do not touch `packages/backend/prisma/schema.prisma` — nothing here needs a new column.
+- Do not build any date-range filtering for this report — it's a point-in-time snapshot across
+  all blocks, matching the metric's own definition (lifetime sold sqft per block, not
+  sold-in-period).
+- Do not change `computeDamagedSlabLoss` or anything else already on `GET /raw-blocks/:id` —
+  this is a separate, additive endpoint.
+- If you find `SalesLineItem.slabId` can be null in ways that break the join (e.g. line items
+  not tied to a specific slab), handle gracefully (`null` slabId rows simply don't contribute
+  to any block's `soldSqft`) rather than crashing — don't over-engineer beyond that.
 
 ### Definition of Done
-- [ ] `useRole()` hook added and used to branch the dashboard by role
-- [ ] Owner/admin see all 5 widgets populated from real local Postgres data (or correct empty
-      states if data is sparse — `raw_block` is currently empty locally, so widgets 3/4 will
-      legitimately show empty/zero, that's correct behavior not a bug)
-- [ ] Non-owner/admin roles see today's unchanged placeholder
-- [ ] Visual style matches existing pages (reuses `globals.css` classes/palette/fonts, no new
-      design system introduced)
-- [ ] No backend files touched
-- [ ] `handoff/REVIEW-REQUEST.md` written
+- [ ] `GET /raw-blocks/recovery-ratio` returns every block in the caller's factory with
+      `soldSqft`, `recoveryRatio` (or `null`), `benchmark: 105`, `belowBenchmark`
+- [ ] Route ordering verified — `recovery-ratio` does not get swallowed by `:id`
+- [ ] Frontend page renders the table (or correct empty state), styled consistent with existing
+      pages, linked from `AppNav.tsx`
+- [ ] Multi-tenant scoping confirmed (query filters on `factoryId`, no global list anywhere)
+- [ ] `tsc --noEmit` clean (both backend and frontend), `npm run build` clean
+- [ ] `handoff/REVIEW-REQUEST.md` written in this worktree
 
 ---
 
 ## Builder Plan
 *Builder adds their plan here before building. Architect reviews and approves.*
 
-Brief confirmed complete and unambiguous — verified all 5 endpoints' actual response shapes
-against the backend before writing code (not assumed):
-- `GET /daily-sales-summary?from&to` → array of `{summaryDate, totalQtySqft, invoicedAmount,
-  actualAmountReceived, isDerived}` (Decimal fields serialize as strings, need `Number()`).
-- `GET /expenses?from&to` → array of `{category, amount, expenseDate, vehicleId, vehicle,
-  toWhom, allocations}`, `include: vehicle`, ordered `expenseDate desc` server-side already.
-- `GET /cutting-sessions/active` → array of `{..., rawBlock: {serialNumber, varietyName, ...},
-  startedAt, dayLogs}`, pre-filtered to `status: "in_progress"`.
-- `GET /raw-blocks` → array of `{..., currentStatus, serialNumber, varietyName}`. Real
-  `currentStatus` values in this codebase today are `in_stock` / `under_cutting` / `cut`
-  (verified via grep of every write site) — not the brief's illustrative "polished"/"sold"
-  labels (those are `Slab.salesStatus`, a different model). Grouping by whatever
-  `currentStatus` values actually occur, label-formatted, rather than hardcoding a status list.
-- `GET /sales-orders` → array of `{orderDate, customer: {name}, lineItems}`, ordered
-  `orderDate desc` server-side already, no date filter support (per brief).
+**What I verified in schema/existing code before writing anything:**
+- `RawBlock.weightTons` is `Decimal? @db.Decimal(10,3)` — nullable, needs `Number(x)` conversion.
+- `Slab.parentBlockId` is required (non-null), and `RawBlock.slabs` (`Slab[]`) is already an established
+  relation used in `findOne` (`include: { slabs: true }`).
+- `SalesLineItem.slabId` is `String? @map("slab_id")`, relation `slab Slab? @relation(...)`, and `Slab.salesLines`
+  is the inverse (`SalesLineItem[]`). Because I navigate `block → slabs → salesLines` (not a raw
+  `salesLineItem.findMany` scanning all line items), a `SalesLineItem` with `slabId = null` is structurally
+  invisible from this path — it can never be the inverse relation of any slab. So the "handle null slabId
+  gracefully" flag in the brief is satisfied by the query shape itself, no extra filtering needed.
+- `SalesLineItem.quantity` is `Decimal @db.Decimal(10,2)` — the sale-time sqft figure per line, per the schema
+  comment on `Slab.lengthFt`/`widthFt` (never using those fields, per the brief).
+- Confirmed `computeDamagedSlabLoss` pattern in `raw-block.service.ts`: private helper taking a narrow inline
+  type, `Number(x)` conversions, no `.toNumber()`. I'm following the same shape for a new
+  `computeRecoveryRatio` helper.
+- One deliberate deviation from `computeDamagedSlabLoss`'s pattern: that helper's result is nested under a
+  `damagedSlabLoss` key on the response. The brief's Definition of Done lists `soldSqft`, `recoveryRatio`,
+  `benchmark`, `belowBenchmark` as fields directly on each returned block object (not nested), so
+  `findRecoveryRatios` will flatten the computed fields onto each block instead of nesting them.
+- Confirmed controller route-ordering pitfall is real risk here: `@Get(":id")` is declared right after
+  `@Get()` in the existing controller. Will add `@Get("recovery-ratio")` immediately after `@Get()` and before
+  `@Get(":id")`.
+- Frontend: confirmed `lib/api.ts` exports `apiFetch(path, token, options?)` and
+  `safeGetToken(getToken)`; confirmed `sales/page.tsx`/`expenses/page.tsx` load pattern (`useEffect` calling an
+  async `loadX` that calls `safeGetToken` then `apiFetch`, early-return if no token). New page is read-only
+  (no form/submit), so it's a simplified version of that pattern — just the load + table.
+- Confirmed `globals.css` badge classes: `.badge.invoiced` (moss/green), `.badge.cash` (rust/red),
+  `.badge.mixed` (brass/amber). Reusing these (not adding new classes) for the status cue: `invoiced` =
+  on/above benchmark, `cash` = below benchmark, `mixed` = no sales yet (`recoveryRatio === null`). This is a
+  semantic reuse (colors already carry the right connotation — green good / red bad / amber neutral) rather
+  than introducing new CSS, per the brief's constraint.
+- Confirmed `AppNav.tsx`'s `LINKS` array is unconditional (role-restricted `/admin/users` is appended
+  conditionally afterward) — will add the new link directly to `LINKS` since this page isn't role-restricted.
 
-Plan: add `packages/frontend/lib/useRole.ts` (wraps Clerk's `useUser()`, returns role string or
-`undefined` while `!isLoaded`). Rewrite `dashboard/page.tsx` to branch on it — owner/admin get a
-new `load()` effect firing all 5 endpoint calls via `Promise.all`, non-owner/admin keep today's
-placeholder verbatim. Reuse the `Ticket` component (already extracted, used by `admin/users`)
-instead of hand-rolling ticket markup. Add a `stat-card`/`stat-number`/`stat-label` class group
-plus a small `mini-bar` class for the expense category breakdown to `globals.css`, extending the
-existing palette (no new colors/fonts). No backend files touched. Proceeding to build.
+**What I'm building:**
+- Backend: `RawBlockService.findRecoveryRatios(factoryId)` — `rawBlock.findMany({ where: { factoryId },
+  include: { slabs: { include: { salesLines: true } } } })`, then map each block through a new private
+  `computeRecoveryRatio({ weightTons, slabs })` helper returning `{ soldSqft, recoveryRatio, benchmark: 105,
+  belowBenchmark }`, spread flat onto the block (with the raw `slabs` include stripped out of the response —
+  no reason to ship the nested slab/salesLine payload to the client when only the aggregate is needed).
+- `belowBenchmark = recoveryRatio == null ? null : recoveryRatio < 105`.
+- `recoveryRatio = (weightTons != null && weightTons > 0 && soldSqft > 0) ? soldSqft / weightTons : null`.
+- Controller: `@Get("recovery-ratio")` before `@Get(":id")`, scoped to `user.factoryId`, no body/params.
+- Frontend: `app/reports/recovery-ratio/page.tsx`, `"use client"`, table with columns Serial / Variety /
+  Weight (t) / Sold Sqft / Recovery Ratio / Status, badge per row, plain-text empty state when the factory has
+  no raw blocks (matches Step 4's precedent of an empty-table state being correct, not a bug, against the
+  current empty local `raw_block` table).
+- Nav link `{ href: "/reports/recovery-ratio", label: "Recovery Ratio" }` added to `AppNav.tsx`'s `LINKS`.
+
+**Uncertain / judgment calls (proceeding, flagging for review rather than blocking):**
+- Route path chosen as `/reports/recovery-ratio` on the frontend (brief says "e.g." so this is a suggestion,
+  not a mandate) — matches the existing `/dpr`, `/polishing`, `/sales`, `/expenses` flat-namespace convention
+  more loosely since it's nested under `/reports/`, but there's no existing `/reports/*` precedent in this
+  codebase to confirm against. Going with the brief's literal example path since nothing contradicts it.
+- No existing plain "empty state" CSS pattern found in `globals.css` (no `.empty-state` class) — using an
+  inline-styled `<div>` with the same muted color (`#857c6c`) already used for `.ticket-subtitle`, rather than
+  inventing a new class, to stay within "reuse existing classes/colors" while still not leaving a bare empty
+  `<table>` with no explanation.

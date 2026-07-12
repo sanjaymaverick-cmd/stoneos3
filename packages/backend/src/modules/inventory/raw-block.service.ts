@@ -106,6 +106,44 @@ export class RawBlockService {
     return { costBasis, totalCost, totalSlabsCut, damagedSlabCount, costPerSlab, lossAmount };
   }
 
+  // See the RECOVERY RATIO comment on `model RawBlock` in schema.prisma: actual sqft sold
+  // (sale-time SalesLineItem.quantity, never Slab.lengthFt/widthFt — those are provisional
+  // production-stage placeholders) divided by weightTons, benchmarked at 105 sqft/ton.
+  // `soldSqft` is summed by navigating block -> slabs -> salesLines (the inverse of
+  // SalesLineItem.slabId), so a SalesLineItem with a null slabId is structurally invisible
+  // here and never contributes to any block's total — no extra filtering needed for that case.
+  async findRecoveryRatios(factoryId: string) {
+    const blocks = await this.prisma.rawBlock.findMany({
+      where: { factoryId },
+      orderBy: { createdAt: "desc" },
+      include: { slabs: { include: { salesLines: true } } },
+    });
+
+    return blocks.map(({ slabs, ...block }) => ({
+      ...block,
+      ...this.computeRecoveryRatio({ weightTons: block.weightTons, slabs }),
+    }));
+  }
+
+  private computeRecoveryRatio(block: {
+    weightTons: unknown;
+    slabs: { salesLines: { quantity: unknown }[] }[];
+  }) {
+    const soldSqft = block.slabs.reduce(
+      (sum, slab) => sum + slab.salesLines.reduce((s, line) => s + Number(line.quantity), 0),
+      0,
+    );
+    const weightTons = block.weightTons != null ? Number(block.weightTons) : null;
+    const benchmark = 105;
+
+    // A block with nothing sold yet has no ratio to report, not a ratio of 0 —
+    // per the brief, soldSqft === 0 must yield null, same as a missing/zero weight.
+    const recoveryRatio = weightTons != null && weightTons > 0 && soldSqft > 0 ? soldSqft / weightTons : null;
+    const belowBenchmark = recoveryRatio != null ? recoveryRatio < benchmark : null;
+
+    return { soldSqft, recoveryRatio, benchmark, belowBenchmark };
+  }
+
   async create(user: AuthenticatedUser, input: CreateRawBlockInput) {
     const factoryId = user.factoryId;
     const entrySource: EntrySource = input.entrySource ?? "purchase";

@@ -15,6 +15,13 @@ export class RawBlockController {
     return this.service.findAll(user.factoryId);
   }
 
+  // Must be declared before @Get(":id") — otherwise Nest matches this path as
+  // GET(":id") with id = "recovery-ratio" and it never reaches this handler.
+  @Get("recovery-ratio")
+  findRecoveryRatios(@CurrentUser() user: AuthenticatedUser) {
+    return this.service.findRecoveryRatios(user.factoryId);
+  }
+
   @Get(":id")
   findOne(@CurrentUser() user: AuthenticatedUser, @Param("id") id: string) {
     return this.service.findOne(user.factoryId, id);

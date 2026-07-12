@@ -9,6 +9,7 @@ const LINKS = [
   { href: "/polishing", label: "Polishing" },
   { href: "/sales", label: "Sales" },
   { href: "/expenses", label: "Expenses" },
+  { href: "/recovery-ratio", label: "Recovery Ratio" },
 ];
 
 export function AppNav() {
