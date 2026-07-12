@@ -387,6 +387,62 @@ manifesting, not a new bug — left untouched per instruction — but it means t
 tested against a real failure in a real browser, not just a simulated one, and behaved exactly as
 intended: terminal, visible, no infinite spinner.
 
+### Step 5B — Per-slab dimension overrides — BUILT, AWAITING REVIEW
+*Date: 2026-07-12 · Built in isolated worktree `feat/slab-dimension-overrides`, running in
+parallel with three other independent steps in sibling worktrees (not touched, not referenced).*
+
+Files changed:
+- `packages/backend/src/modules/production/cutting-session.service.ts` — `CompleteSessionInput`
+  gains an optional `slabOverrides?: { sequence; lengthFt?; widthFt?; thicknessMm? }[]` field;
+  `complete()` validates each `sequence` is a unique integer in `1..finalGoodSlabCount` (400
+  otherwise) before the transaction opens, then the generation loop resolves each slab's
+  dimensions as `override?.field ?? input.field` (falling through to the existing `?? 18.0`
+  thickness default unchanged) instead of always using the session-level input directly.
+- `packages/frontend/app/dpr/page.tsx` — added a per-session "different sizes for some slabs?"
+  checkbox (default off, only rendered once `finalGoodSlabCount` has a valid value) inside the
+  existing Complete Cutting block; when checked, renders one `.row-card`/`.row-grid` row per
+  slab sequence (reusing the same repeatable-row pattern already used in `sales/page.tsx`),
+  pre-filled with the session-level defaults and independently editable, inside a scrollable
+  (`maxHeight: 320, overflowY: auto`) wrapper so a 47-row batch stays usable. `submitCompletion`
+  only builds/sends `slabOverrides` when the toggle is on, and only includes per-sequence entries
+  (and only the specific fields) that actually differ from the session default — untouched rows
+  are omitted entirely, keeping the default (toggle-off) request byte-identical to before this
+  step.
+
+Decisions made:
+- Validation runs before the `$transaction` opens (same pattern as the existing
+  `finalGoodSlabCount > totalSlabsCut` check), so a bad `slabOverrides` payload never partially
+  applies.
+- Built an `overridesBySeq` `Map` once per `complete()` call rather than `.find()`-ing inside the
+  per-slab loop — O(n) instead of O(n²) for large batches, no behavior difference.
+- No controller/DTO change needed — `session.controllers.ts`'s `complete()` endpoint already
+  takes `body: any` and passes it straight through to the service, so the new field flows through
+  untouched; validation lives entirely in the service, matching this file's existing style (no
+  class-validator anywhere in this module).
+- No schema/migration change, per the brief — `Slab.lengthFt`/`widthFt`/`thicknessMm` already
+  exist as per-row columns.
+
+Verification (no live DB, per this run's instructions):
+- `npx tsc --noEmit` clean in both `packages/backend` and `packages/frontend` (after running
+  `npx prisma generate` once, which this fresh worktree's `node_modules` needed — generation
+  only, no DB connection).
+- `npm run build` clean in both packages (Next.js build also passed its own type/lint pass and
+  generated `/dpr` — 5.14 kB, 151 kB First Load JS).
+- Traced `complete()` by hand for the default path (`slabOverrides` undefined/omitted): the `Map`
+  is empty, `overridesBySeq.get(seq)` is always `undefined` for every `seq`, and each slab's
+  `lengthFt`/`widthFt`/`thicknessMm` resolution collapses to exactly `input.field` / `?? 18.0` —
+  identical to the pre-existing logic, confirming the backward-compatibility requirement.
+- Traced a mixed-size example by hand (finalGoodSlabCount=5, one override on `sequence: 3` with
+  only `lengthFt` set): seq 3 gets the overridden length plus session-default width/thickness;
+  seq 1, 2, 4, 5 get pure session defaults — confirms the per-field fallback works as specified.
+- Traced the validation branch by hand for `sequence: 0`, `sequence` > `finalGoodSlabCount`, and
+  a duplicate `sequence` — all three throw `BadRequestException` before the transaction opens.
+
+Open questions: none — logged in the Builder Plan section of `handoff/ARCHITECT-BRIEF.md`, brief
+was unambiguous on both backend and frontend shape.
+
+---
+
 ## Known Gaps
 *Logged here instead of fixed. Addressed in a future step.*
 
