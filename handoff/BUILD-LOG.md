@@ -389,7 +389,6 @@ manifesting, not a new bug — left untouched per instruction — but it means t
 tested against a real failure in a real browser, not just a simulated one, and behaved exactly as
 intended: terminal, visible, no infinite spinner.
 
-<<<<<<< HEAD
 ### Step 5A — Recovery ratio report — BUILT, AWAITING REVIEW
 *Date: 2026-07-12. Built in isolated worktree `worktrees/recovery-ratio-report`,
 branch `feat/recovery-ratio-report`.*
