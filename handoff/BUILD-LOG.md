@@ -9,17 +9,16 @@
 isolated worktrees `worktrees/recovery-ratio-report`, `worktrees/slab-dimension-overrides`,
 `worktrees/tally-item-detail`). Step 5D (Next.js 15→16 upgrade) still in review in its own
 worktree, `worktrees/nextjs-16-upgrade` — merges last per plan.
-**Last cleared:** Step 4 — Richard's Round 2 re-review found 0 Must Fix (Ready for Builder: YES,
-2026-07-11); one more tiny non-blocking gap he flagged (token fetch not covered by the
-try/finally) was closed directly by the Architect rather than a third Bob round-trip. Verified
-live in a real browser (not just scripts/tsc) after fixing an unrelated CORS side-effect of the
-port-3000→3010 dev change (`backend/.env`'s `FRONTEND_URL` was stale) — dashboard renders real
-30-day sales/expense totals, correct empty states for cutting sessions/raw block stock, and
-recent expenses, styled consistent with the existing ticket/stamp identity.
-**Repo:** `origin` is now `https://github.com/sanjaymaverick-cmd/stoneos3.git` (repointed
-2026-07-11 — the prior remote, `sos.git`, held the old out-of-scope AWS-deployment learning
-exercise). All local commits through `b0c75ea` are pushed and confirmed matching
-`origin/main`.
+**Last cleared:** Steps 5A/5B/5C — each independently reviewed clean (0 Must Fix), merged to
+`main` via `--no-ff` merge commits, verified with a full `tsc --noEmit` + `npm run build` pass
+in both packages AFTER merging (not just per-branch) to confirm the three independently-built
+changes integrate correctly together — all clean, `/recovery-ratio` and the grown `/dpr` bundle
+both present in the build output as expected. Owner gave explicit go-ahead to merge these three
+2026-07-12.
+**Repo:** `origin` is `https://github.com/sanjaymaverick-cmd/stoneos3.git`. All local commits
+through `48a1afa` (Steps 5A/5B/5C merged + brief reset) are pushed and confirmed matching
+`origin/main`. CI/CD deploy workflow remains disabled (`deploy.yml.disabled`) — this push
+triggered nothing.
 **Bootstrap:** Run 2026-07-11 (`prisma/bootstrap.ts`, local Postgres) — `sanjay.maverick@gmail.com`
 granted owner access to the existing "Vedam Granites" factory (`4485c4f7-...`), B-21/LPM
 machines seeded. Fixed `bootstrap.ts` first to reuse an existing factory by name instead of

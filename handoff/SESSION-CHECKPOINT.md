@@ -1,117 +1,119 @@
-# Session Checkpoint — 2026-07-11
+# Session Checkpoint — 2026-07-12
 *Read this before reading anything else. If it covers current state, skip BUILD-LOG.*
 
 ---
 
 ## Where We Stopped
 
-Steps 1 (historical backfill), 2 (RawBlock opening-balance/entry-provenance), 3 (damaged-slab
-cost allocation on `GET /raw-blocks/:id`), and 4 (owner/admin role-based dashboard) are all
-built, reviewed clean by Richard, committed, and pushed. README items 1 (bootstrap), 2, 3, 7,
-8 (superseded), 9 are all closed out. Dashboard is no longer a placeholder for owner/admin —
-verified live in a real browser, not just scripts.
+Steps 5A (recovery ratio report, README #4), 5B (per-slab dimension overrides, README #5), and
+5C (item-level Tally import + cross-check, README #6) were built in parallel using isolated git
+worktrees (one branch/worktree per step, avoiding collisions on the shared `handoff/*.md`
+files), each independently reviewed by Richard with 0 Must Fix, merged into `main` with
+`--no-ff` merge commits, verified end-to-end on `main` (not just per-branch) with a clean
+`tsc --noEmit` + `npm run build` in both packages, and pushed to `origin/main` — all on
+2026-07-12, with the Owner's explicit go-ahead for the merge.
 
-Remaining open items:
-- README #4 (recovery ratio report), #5 (per-slab dimension overrides), #6 (item-level Tally
-  detail) — none started.
-- Role-based dashboard views for accountant/manager/supervisor/operator/auditor — owner/admin
-  was deliberately scoped first (Step 4); others come later, one at a time, if wanted.
-- Next.js major-version upgrade (15.5.20 → 16.2.10 latest) — explicitly deferred to its own
-  future step with a full regression pass across every page; do not bundle it into unrelated
-  work.
+README's remaining next-steps list is now down to one: #6 is done (with a caveat — see below).
+Step 5D (Next.js 15→16 major-version upgrade) was also built in its own worktree and reviewed,
+but is **not yet merged** — Richard's review surfaced a real dependency-conflict finding (see
+below) that needs a decision before it lands. It was deliberately planned to merge last since it
+touches the broadest shared surface.
 
-**Repo:** `origin` is `https://github.com/sanjaymaverick-cmd/stoneos3.git` (moved from the old,
-now out-of-scope `sos.git` this session). Local `main` and `origin/main` are identical at
-`543cd8a` — everything committed and pushed, nothing held back.
+**Repo:** `origin` is `https://github.com/sanjaymaverick-cmd/stoneos3.git`. Local `main` and
+`origin/main` are identical at `48a1afa` — Steps 5A/5B/5C and the post-merge brief reset are all
+pushed. CI/CD deploy workflow remains disabled (`deploy.yml.disabled`); the push triggered no
+side effects. Step 5D's branch (`chore/nextjs-16-upgrade`) is NOT merged or pushed yet.
 
-**Local Postgres state:** Step 1's backfilled data (2,421 Expense rows, 514 DailySalesSummary
-rows), Step 2's schema migration applied, `raw_block` itself still empty (no real blocks
-entered yet — Steps 2/3 only added capability). Bootstrap has been run for real: factory "Vedam
-Granites" (`4485c4f7-...`) has B-21 + LPM machines seeded and `sanjay.maverick@gmail.com`
-granted owner access — verified directly against Postgres.
+**Worktrees:** four isolated worktrees were created under `worktrees/` for this session's
+parallel-build round: `recovery-ratio-report`, `slab-dimension-overrides`, `tally-item-detail`
+(all merged, safe to remove), and `nextjs-16-upgrade` (still active, holds Step 5D's unmerged
+work — do not remove until that step is resolved). Removing a worktree: `git worktree remove
+worktrees/<name>` from the main checkout, then `git branch -d <branch>` once merged.
 
-**Local dev environment:** frontend dev server now runs on port **3010**, not 3000 (`.claude/
-launch.json`) — port 3000 is occupied by an unrelated local app ("STONEOS CONTROL ROOM"),
-confirmed with the Owner this is fine going forward. `packages/backend/.env`'s `FRONTEND_URL`
-was updated to match (`http://localhost:3010`) — CORS will break again if these two drift out
-of sync. Both dev servers need a restart (not just hot-reload) to pick up `.env` changes.
+**Open decision for next session (or immediately, if resuming same-session):** Step 5D found
+that the production `.next/standalone` build artifact ships **two live React copies** —
+`lucide-react@0.383.0`'s peer range caps React at `^18.0.0`, which blocks npm from hoisting the
+upgrade's `react@19.2.7` to the workspace root. Root `node_modules` (and everything resolving
+through it, including `next` and `@clerk/nextjs`) stays on React `18.3.1`; `19.2.7` only exists
+nested inside `packages/frontend/node_modules`. Confirmed NOT an active break today (Richard
+started the built standalone server and curled `/sign-in` — clean 200, real Clerk markup) but a
+real landmine for future work. Three options, unresolved: (a) add an npm `overrides` entry
+forcing a single `react`/`react-dom` version workspace-wide — smallest, most standard fix, no
+unrelated dependency bumped; (b) bump `lucide-react` to `1.24.0` (declares React 19 support) —
+its own major-version jump, out of this step's original scope; (c) accept the current mixed-copy
+state and merge as-is. Architect's lean is (a); needs to actually be applied, re-verified, and
+then Step 5D can merge.
 
-There is no production environment for this project — the old AWS deployment is explicitly out
-of scope (see `project-stoneos-production-deploy-hold` memory), and historical-backfill
-execution against any future real environment is the Owner's own manual responsibility (see
-`project-backfill-manual-by-owner` memory), not the team's. Next action is whichever remaining
-item the Project Owner wants to tackle — nothing is mid-flight.
+**Remaining open items (from README, all pre-existing, unchanged this session):**
+- #6 (item-level Tally import) is built but **real-data verification is NOT done** — no real
+  Tally XML export exists in this repo (confidential business data, passed as external CLI args
+  to `validate-tally-parser.js`). This is the Owner's own manual step, same pattern as
+  historical-backfill execution — see `project-backfill-manual-by-owner` memory. Also carried
+  forward as the Owner's call, not resolvable at the code level: whether the Sales-voucher-type
+  filter (`"Sales"`, case-insensitive) is specific enough for real Tally voucher-type names, and
+  whether `ACTUALQTY` vs `BILLEDQTY` precedence is right — both flagged transparently by Bob and
+  Richard as unverified guesses.
+- Role-based dashboard views for accountant/manager/supervisor/operator/auditor — still not
+  started, no brief written. Deliberately held out of this parallel-build round (would need
+  product/UX input per role, not just technical scoping).
+- Next.js 15→16 upgrade (Step 5D) — see "Open decision" above.
+
+**Local Postgres state:** unchanged this session — no code from 5A/5B/5C/5D was exercised
+against a live database at any point (all four worktrees had no reachable `DATABASE_URL`;
+correctness was verified by hand-tracing code/diffs, not live queries). `raw_block` and
+`sales_order`/`sales_line_item` remain empty locally, same as end of last session.
+
+**Local dev environment:** unchanged — frontend dev server on port 3010, backend on 4000 (see
+prior checkpoint history below if resuming fresh). Not touched this session beyond worktree-local
+`npm install`s (each worktree has its own independent `node_modules`, no shared state with the
+main checkout's dev servers).
 
 ---
 
 ## What Was Decided This Session
 
-- Historical backfill scope: `Expense` + `DailySalesSummary` only — pre-go-live production
-  session data (CuttingSession/PolishingSession) is permanently unrecoverable from the source
-  data (KG-1).
-- PAYMENTS column → `staff_salary`; OFFICIAL column's loan/bill lump sums → `loan_payment`
-  (text-keyword split, not amount threshold).
-- Tally exports cover FY 2025-26 for daybook detail, but the monthly/daily summary reports
-  span 1 Apr 2022 → 1 Apr 2026 (verified via leap-year day-count cross-check) — only FY25-26
-  has real data in them.
-- One historical data-entry anomaly (2026-04-20, shifted columns) fixed: ₹50k → staff_salary
-  for staff member Sandeep; ₹500k "WPPF" (partner profit payment) deliberately left unrecorded
-  — not a business expense, no matching category.
-- RawBlock opening-balance feature: `transfer_in` entry source removed entirely — **no
-  cross-factory data access of any kind** until a proper multi-factory model is built at the
-  login layer (Owner's explicit, standing decision — see
-  `project-stoneos-no-cross-factory-access` memory).
-- GitHub Actions deploy workflow disabled locally (`deploy.yml` → `deploy.yml.disabled`) —
-  takes effect only once/if pushed.
-- The old AWS deployment (`sos.git` remote, stoneos-db/ECS/ALB) is a prior learning exercise
-  with no real business data — out of scope entirely going forward, not to be referenced or
-  planned around (see `project-stoneos-production-deploy-hold` memory).
-- Damaged-slab cost basis (Step 3): purchase price only (`actualAmountPaid` → `invoicedAmount`
-  fallback), NOT purchase + allocated expenses — Owner's explicit choice for
-  simplicity/availability over completeness.
-- Repo moved to `https://github.com/sanjaymaverick-cmd/stoneos3.git`; all local commits pushed
-  and confirmed matching `origin/main`.
-- Historical-backfill execution against any future real environment is the Owner's own manual
-  responsibility, not the team's (see `project-backfill-manual-by-owner` memory).
-- `bootstrap.ts` fixed to reuse an existing factory (by name) instead of unconditionally
-  creating one — needed because a factory row already existed with real backfilled data linked
-  to it; running it unmodified would have created a duplicate and orphaned that data from the
-  owner grant.
-- UI/UX direction (Step 4 and beyond): REFINE the existing "quarry ledger" visual identity
-  (brass/stone/graphite palette, ticket/stamp motif) rather than re-skin — Owner's explicit
-  choice after reviewing 2026 UI/UX trend research. Role-based dashboards scoped owner/admin
-  first, other roles later, one at a time — matches the trend research's "2-4 personas before
-  laying out anything" guidance.
-- Frontend dev port moved 3000 → 3010 (port 3000 taken by an unrelated app); Owner confirmed
-  3010 is fine going forward, no need to reclaim 3000.
-- Next.js upgrade (15→16, a major version) explicitly deferred to its own future step rather
-  than bundled into Step 4 — Owner's choice, to avoid an untested breaking change riding along
-  with unrelated work.
+- **Parallelization approach:** the Owner asked to "start all" remaining README items at once.
+  Architect flagged that the three-man-team handoff protocol (`ARCHITECT-BRIEF.md`,
+  `BUILD-LOG.md`, `REVIEW-REQUEST.md`, `REVIEW-FEEDBACK.md`) is single-threaded by design
+  (shared files, explicitly "overwrite each step, not a log" for the brief) and true parallelism
+  would corrupt that trail. Resolved with git worktrees — one isolated branch + working directory
+  per step, avoiding collisions during build/review, merged back to `main` sequentially.
+- **Scope of the parallel batch, Owner's explicit choice:** README #4/#5/#6 (recovery ratio
+  report, per-slab dimension overrides, item-level Tally detail) plus the Next.js 15→16 upgrade,
+  run together — Owner chose to include the Next.js upgrade despite Architect flagging it as
+  higher-risk (touches the broadest shared surface, was previously deliberately deferred to its
+  own isolated step). Role-based dashboards for the remaining 5 personas were held out (no brief
+  existed, needs product input, Architect's call to defer rather than draft briefs unbriefed).
+- **Next.js upgrade merges last**, after the other three are already on `main` — Architect's
+  technical call to minimize conflict surface, since this step touches `package.json` and
+  broadly shared frontend files the other three don't.
+- **Recovery ratio route path:** flattened from the brief's own example (`/reports/recovery-ratio`)
+  to `/recovery-ratio`, matching every other page's flat convention — Richard escalated it as a
+  navigation-convention call, Architect decided and fixed directly (two-file change) rather than
+  a Bob round-trip, matching the Step 4 precedent for tiny Architect-closed gaps.
+- **Tally item-level parsing constraint:** confirmed no real Tally XML export exists anywhere in
+  this repo (business-confidential, passed as external CLI args) — Step 5C was explicitly briefed
+  to build against documented/inferred structure only and NOT claim real-data verification,
+  matching the standing rule that real-data runs are the Owner's own manual step.
+- Steps 5A/5B/5C merge: Owner gave explicit go-ahead in chat after reviewing the three cleared
+  verdicts; merged, integration-verified on `main`, and pushed same session.
 
 ---
 
 ## Still Open
 
-- Three README next-steps remain: #4 recovery ratio report (105 sqft/ton benchmark), #5
-  per-slab dimension overrides for mixed-size batches, #6 item-level Tally detail import.
-- Role-based dashboard views beyond owner/admin (accountant/manager/supervisor/operator/
-  auditor) — not started, no brief written yet.
-- Next.js 15→16 upgrade — deferred, own step when picked up, needs full regression pass.
-- KG-2 (dpr-daily follow-up: daily staff_salary granularity for a future step, if ever wanted)
-  and KG-4/KG-7 (Richard's deferred Should Fix items from Steps 1/2) are logged but not
-  scheduled — see `handoff/BUILD-LOG.md` Known Gaps for full detail.
-- Step 3's own Should Fix (non-blocking): session-summing in `computeDamagedSlabLoss` assumes
-  `totalSlabsCut`/`damagedSlabCount` are always set together — holds today, would need revisit
-  if the unused `CuttingSession.status = "aborted"` value is ever wired up.
-- Richard also flagged (Step 2, Should Fix, not yet acted on): opening_balance/transfer_in
-  creation has no minimum-data validation (e.g. nothing requires `weightTons` be supplied),
-  and `input.startingState` isn't validated against its 3-value union.
-- Production/AWS: no production environment exists at all right now. If/when one is set up,
-  it'll be new infrastructure the Owner sets up deliberately — do not assume the old AWS
-  resources are it.
-- Local dev servers (backend port 4000, frontend port 3010) may still be running from this
-  session — check before starting new ones, and remember both need a real restart (not hot-
-  reload) to pick up any future `.env` changes.
+- **Step 5D's React dual-copy fix** — needs to actually be applied (Architect's lean: npm
+  `overrides` forcing a single React version), re-verified, then merged. This is the very next
+  action if resuming immediately.
+- README #6's real-data verification and the two flagged unverified assumptions (Sales-voucher
+  filter specificity, ACTUALQTY/BILLEDQTY precedence) — Owner's own manual step once he has a
+  real Tally export to test against.
+- Role-based dashboard views beyond owner/admin — not started, no brief written yet.
+- Worktree cleanup: `worktrees/recovery-ratio-report`, `worktrees/slab-dimension-overrides`,
+  `worktrees/tally-item-detail` are merged and safe to remove (`git worktree remove <path>` +
+  `git branch -d <branch>`) whenever convenient — not urgent, just housekeeping.
+- Production/AWS: still no production environment exists at all. Unchanged from prior sessions —
+  see `project-stoneos-production-deploy-hold` memory.
 
 ---
 
