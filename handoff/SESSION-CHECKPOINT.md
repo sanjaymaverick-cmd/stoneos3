@@ -1,133 +1,117 @@
-# Session Checkpoint — 2026-07-12
+# Session Checkpoint — 2026-07-13
 *Read this before reading anything else. If it covers current state, skip BUILD-LOG.*
 
 ---
 
 ## Where We Stopped
 
-All four of this session's parallel-built steps are done: 5A (recovery ratio report, README
-#4), 5B (per-slab dimension overrides, README #5), 5C (item-level Tally import + cross-check,
-README #6), and 5D (Next.js 15.5.20 → 16.2.10 major-version upgrade). Each was built in its own
-isolated git worktree (avoiding collisions on the shared `handoff/*.md` files), independently
-reviewed by Richard with 0 Must Fix, merged into `main` with `--no-ff` merge commits (5D last,
-per plan), and the fully-merged result was verified end-to-end with a clean-reinstall +
-`tsc --noEmit` + `npm run build` pass in both packages — confirming all four independently-built
-changes actually integrate correctly together, not just individually. All pushed to
-`origin/main`.
+**Active work: building the AI Business Analyst / Copilot (README item #10).** This is the
+first genuinely new-product-behavior phase of the project — everything before it was foundation
+(clean structured data, traceability). Direction was set through an explicit conversation with
+the Owner (not assumed):
 
-README's original "Close out remaining gaps" next-steps list is now fully closed. Items #4-#6
-are done and README reflects it (Tally import row corrected from "Stubbed" to "Built"). The two
-remaining loose ends — #6's real-data verification and role-based dashboards beyond owner/admin
-— are both explicitly OUT OF SCOPE for this version per the Owner's direct call (see "Closed Out
-This Session" below), not open work items anymore.
+- **Interface:** chat/Q&A embedded in the StoneOS app (a new page, owner-only).
+- **First job:** answer ad-hoc natural-language questions over real business data.
+- **Query mechanism:** free-form LLM-generated SQL — the Owner was shown the safer alternative
+  (a fixed tool-calling layer over typed backend functions) and chose flexibility anyway, an
+  informed call given the risk. Mitigation is Postgres Row-Level Security making cross-tenant
+  access structurally impossible, not "hope the LLM remembers to scope by factory."
+- **LLM provider:** Google Gemini, not Anthropic Claude — the Owner wanted to avoid a new
+  Anthropic billing setup; Gemini has a genuinely free tier. Interface stays embedded in the app
+  (the alternative considered — using the Owner's own existing Claude access via an MCP server —
+  was explicitly rejected because it would've moved the interface out of the app).
+- **Access scope:** owner-only for v1, matching the existing dashboard's owner/admin gating
+  precedent (though even narrower — just owner, not admin).
 
-After the checkpoint above was first written, a `/graphify` knowledge-graph build of the repo
-(665 nodes, 1146 edges, 40 communities — output in `graphify-out/`, untracked/local) caught a
-genuine stale doc: README's "What's built vs. stubbed" table still said "Dashboard | Placeholder
-only" even though Step 4 (weeks earlier) shipped a real owner/admin dashboard. Fixed directly.
-The graph also traced two "god nodes" (`RawBlockService`, `PolishingSessionService`) — one
-(`RawBlockService`) is a genuine single-responsibility-erosion candidate worth watching (CRUD +
-state transitions + two bolted-on report methods); the other's high degree turned out to be a
-graphify AST extraction bug (two controller classes in `session.controllers.ts` share the
-identifier `service` for their injected dependency, and the extractor misattributed
-`CuttingSessionController`'s 5 method calls to `PolishingSessionService`) — confirmed by reading
-the actual source, not a real code issue.
+**Step 6A (database safety foundation) is DONE, reviewed clean, and merged/pushed** — this had
+to come first and be proven airtight before any LLM-facing code, since it's the entire safety
+story for free-form SQL. Built: a new `stoneos_copilot_ro` Postgres role (SELECT-only, no
+write/DDL grants, not superuser, no BYPASSRLS) plus Row-Level Security policies on 35
+tenant-scoped tables (19 with their own `factory_id` column, 16 child tables scoped via a
+subquery through their parent's `factory_id`), enforced by a per-connection
+`app.current_factory_id` session variable that fails closed (zero rows, not an error, not all
+rows) when unset. Richard reviewed independently — re-derived the full table list from
+`schema.prisma` himself rather than trusting Bob's count, live-tested RLS under adversarial
+conditions (cross-tenant joins, UNION ALL across child tables, fail-closed checks with
+unset/empty/garbage session values) — 0 Must Fix. The Architect then independently re-verified
+the load-bearing claims directly against the live database (policy count, role permissions, data
+baseline) before pushing, since a system note flagged the safety classifier was unavailable
+during Richard's review. Everything checked out.
+
+**Known gap carried forward (KG-8, pre-existing and unrelated to this work):** a stuck migration
+record (from before this session) blocks the `tally_voucher_item` table from existing yet, so
+its RLS policy is written correctly in the migration but untested — the table just doesn't exist
+in the live DB right now. Richard flagged an operational trap for whenever KG-8 gets resolved: a
+routine `prisma migrate deploy` won't retroactively apply that table's RLS policy once the table
+finally gets created (it'll error on already-existing objects if the migration file is naively
+rerun) — someone has to manually apply those 3 statements, or that specific table could silently
+end up unprotected. **Planned mitigation for Step 6B:** a startup-time assertion that every
+expected tenant-scoped table actually has RLS enabled, so a gap like this fails loudly at boot
+instead of silently.
+
+**Next action:** write the Step 6B brief — the actual Gemini integration (question → generated
+SQL → validated → executed via the RLS-protected read-only role → natural-language answer),
+query logging for audit, and the owner-only chat page. Step 6A's Owner go-ahead only covered 6A
+itself; 6B needs its own go-ahead before merging, per the same deploy-gate discipline.
 
 **Repo:** `origin` is `https://github.com/sanjaymaverick-cmd/stoneos3.git`. Local `main` and
-`origin/main` are identical at `704e72e`, confirmed synced both directions. CI/CD deploy
-workflow remains disabled (`deploy.yml.disabled`) — none of this session's pushes triggered any
-side effect.
-
-**Worktrees:** all four are already cleaned up (removed + branches deleted) — confirmed via
-`git worktree list` (only the main checkout remains) and `git branch -a` (only `main`). This is
-done, not a pending action.
-
-**Local Postgres state:** unchanged this session — no code from any of the four steps was
-exercised against a live database at any point (no worktree had a reachable `DATABASE_URL`;
-correctness was verified by hand-tracing code/diffs and, for 5D, an isolated dependency-install
-simulation). `raw_block` and `sales_order`/`sales_line_item` remain empty locally.
-
-**Local dev environment:** unchanged — frontend dev server on port 3010, backend on 4000. Not
-started this session; each worktree used its own independent `node_modules`, no shared state
-with any running dev servers. The root checkout's `node_modules` was wiped and freshly
-reinstalled during final verification (now on Next 16 / React 19) — a dev server restart (not
-hot-reload) is needed to pick this up if one was left running from a prior session.
+`origin/main` are identical at `94baf27`, confirmed synced both directions (fetched and
+compared, not just trusting push output). CI/CD deploy workflow remains disabled
+(`deploy.yml.disabled`).
 
 ---
 
-## What Was Decided This Session
+## What Was Decided This Session (2026-07-13, Copilot direction)
 
-- **Parallelization approach:** the Owner asked to "start all" remaining README items at once,
-  then confirmed literal parallelization. Architect flagged the three-man-team handoff protocol
-  is single-threaded by design (shared, "overwrite each step" files) and resolved it with git
-  worktrees — one isolated branch + working directory per step, merged back to `main`
-  sequentially to avoid corrupting the handoff trail.
-- **Batch scope, Owner's explicit choice:** README #4/#5/#6 plus the Next.js 15→16 upgrade, run
-  together — Owner chose to include the upgrade despite Architect flagging it as higher-risk
-  (broadest shared surface, previously deliberately deferred). Role-based dashboards for the
-  remaining 5 personas were held out (no brief existed, needs product input).
-- **Next.js upgrade merged last**, after the other three — minimized conflict surface, confirmed
-  the right call in practice (it was the only step needing a genuine cross-cutting dependency
-  fix after review).
-- **Recovery ratio route path** flattened from `/reports/recovery-ratio` to `/recovery-ratio` to
-  match every other page's flat convention — Architect's direct fix after Richard escalated it.
-- **Tally item-level parsing:** confirmed no real Tally XML export exists anywhere in this repo;
-  Step 5C was explicitly built against inferred structure only, with real-data verification
-  explicitly deferred to the Owner's own manual step (matching the standing backfill-execution
-  rule).
-- **Dual-React-copy fix (Step 5D):** Richard's review found the production build artifact shipped
-  two live React copies because `lucide-react`'s peer range (`^18.0.0`) blocked React 19 from
-  hoisting to the workspace root. Fixed with an npm `overrides` entry added to **both** the root
-  `package.json` and `packages/frontend/package.json` — the root-only fix would have been
-  insufficient, since `docker-compose.prod.yml`'s frontend build context is `./packages/frontend`
-  alone and never sees the root `package.json`. Verified by simulating that exact isolated
-  install in a scratch directory (single React 19.2.7 copy resolved correctly). Considered and
-  explicitly rejected pinning `outputFileTracingRoot`/`turbopack.root` in `next.config.js` — the
-  correct value genuinely differs between the isolated Docker build and local monorepo dev, and
-  Next 16 requires both settings to match, so hardcoding either broke the other. Left
-  `next.config.js` untouched; the residual "workspace root inference" warning seen when building
-  directly inside the nested worktree is confirmed to be an artifact of this session's temporary
-  multi-worktree structure, not a real risk to the actual Docker deployment path (which never
-  sees sibling worktrees or the outer checkout).
-- **Process note:** a stray unresolved git conflict marker (`<<<<<<< HEAD`) was accidentally left
-  in `BUILD-LOG.md` during the Step 5C merge conflict resolution, caught during a pre-5D-merge
-  re-scan of all handoff files, and fixed in its own commit before continuing. Worth being extra
-  careful about when resolving multi-block conflicts across sequential worktree merges — git's
-  line-based 3-way merge produced misleading "false match" interleaving on the review-feedback
-  logs more than once this session (near-identical boilerplate text across different steps'
-  sections caused git to merge them incorrectly rather than flag a clean conflict); the reliable
-  fix each time was extracting all three merge stages (`git show :1/:2/:3:<file>`) and manually
-  reassembling by content boundary rather than trusting the inline conflict markers.
+- **Query approach — free-form SQL over tool-calling:** the Owner's explicit, informed choice
+  after being shown both options and the risk tradeoff. Mitigated with RLS rather than left as
+  an unmitigated risk (see Step 6A above).
+- **LLM provider — Gemini over Anthropic:** avoids a new Anthropic billing setup; Gemini's free
+  tier is sufficient for now. This was itself a two-step clarification — the Owner's first
+  instruction ("without needing Anthropic api key") was ambiguous between "swap providers" and
+  "use my existing Claude access via MCP instead," and those have very different user-facing
+  implications (where you actually go to ask a question) — asked directly rather than guessing,
+  got "swap providers, keep chat in the app."
+- **Security architecture, Architect's technical call:** Postgres RLS + a dedicated read-only
+  role, not application-layer scoping checks — makes the tenant-isolation guarantee hold even if
+  the LLM-generated SQL forgets to filter by factory, rather than depending on prompt
+  instructions being followed correctly every time.
+- **Step 6A built and reviewed in isolation before any Step 6B work starts** — deliberate
+  sequencing given everything else depends on this foundation being correct; matches the
+  anti-drift "one step at a time" rule especially strictly here given the security stakes.
 
 ---
 
 ## Still Open
 
-- Production/AWS: still no production environment exists at all. Unchanged from prior sessions —
-  see `project-stoneos-production-deploy-hold` memory.
+- Production/AWS: still no production environment exists at all. Unchanged from prior
+  sessions — see `project-stoneos-production-deploy-hold` memory.
+- Step 6B (Copilot backend + chat UI) — not started, brief not yet written.
+- KG-8 (stuck migration blocking `tally_voucher_item`) — pre-existing, unrelated to Copilot work,
+  not scheduled to be resolved as part of this feature; Step 6B's startup RLS-coverage assertion
+  is a mitigation for its downstream risk, not a fix for KG-8 itself.
 
-## Closed Out This Session (Owner decisions)
+---
 
-- **Docker smoke test for Step 5D — DONE, real Docker (not simulated).** Docker turned out to be
-  available in this environment after all. Ran the actual `docker compose -f
-  docker-compose.prod.yml build frontend` — built clean. Inspected the resulting image directly:
-  exactly one `react`/`react-dom` copy at `19.2.7` (searched the full image filesystem, not just
-  `node_modules` — no stray copy anywhere), confirming the dual-React-copy fix holds in the real
-  production artifact, not just the isolated-install simulation from earlier. Also booted the
-  image standalone (`docker run`, mapped port 3099) and confirmed `/sign-in` returns a clean
-  `200` with no startup errors in the container logs. Step 5D is now fully closed — no more open
-  verification items on it.
-- **Role-based dashboards beyond owner/admin — Owner's explicit call: OUT OF SCOPE for this
-  version, no plan to build.** Not "not started yet" — deliberately not happening. README's
-  Dashboard row and any future references should reflect owner/admin as the complete scope for
-  dashboards in this version, not a partial/interim state.
-- **README #6 Tally real-data verification — Owner's explicit call: OUT OF SCOPE for now.** The
-  code (`TallyVoucherItem`, item-cross-check endpoint) stays as built; running it against a real
-  Tally export is deprioritized, not scheduled. Still the Owner's own manual step whenever it
-  does happen, per the standing backfill-execution-is-manual rule — just not being pursued
-  actively right now.
-- **`graphify-out/` — Owner's explicit call: commit it.** Kept in version control rather than
-  gitignored, so the knowledge graph travels with the repo for future sessions/contributors.
+<details>
+<summary>Prior session summary — Steps 5A-5D (parallel-build round, 2026-07-12), collapsed for length</summary>
+
+All four of that session's parallel-built steps (5A recovery ratio report, 5B per-slab dimension
+overrides, 5C item-level Tally import, 5D Next.js 15→16 upgrade) were built in isolated git
+worktrees, independently reviewed with 0 Must Fix each, merged sequentially, and verified
+end-to-end post-merge. README's original next-steps list is fully closed — items #4-#6 done,
+and the two remaining loose ends (Tally real-data verification, role dashboards beyond
+owner/admin) are explicitly OUT OF SCOPE for this version per the Owner's direct call, not
+pending work. A `/graphify` knowledge-graph build of the repo (committed to `graphify-out/` per
+the Owner's call) caught and fixed a stale README claim (Dashboard showed as placeholder-only
+after Step 4 had actually shipped a real one) and traced two "god nodes," one a genuine
+single-responsibility-erosion candidate (`RawBlockService`) and one a graphify AST extraction
+bug, not a real code issue (`PolishingSessionService`). Step 5D's dual-React-copy fix was
+confirmed with a real Docker build (not just simulated) — single React 19.2.7 copy in the actual
+image, clean container boot. Full detail in `handoff/BUILD-LOG.md`'s Step 5A-5D entries and git
+history around commits `684d955`..`81fa0d4`.
+
+</details>
 
 ---
 
