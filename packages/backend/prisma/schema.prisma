@@ -51,6 +51,7 @@ model Factory {
   utilityReadings  UtilityReading[]
   dailySalesSummaries DailySalesSummary[]
   blockTransfersOut RawBlock[] @relation("BlockTransferSource")
+  copilotQueryLogs  CopilotQueryLog[]
 
   @@map("factory")
 }
@@ -684,6 +685,27 @@ model InventorySnapshot {
 
   @@unique([factoryId, snapshotDate, itemType])
   @@map("inventory_snapshot")
+}
+
+// AI Copilot (Step 6B) audit log — every /copilot/ask attempt, success or
+// failure. Written/read only through the normal PrismaService connection
+// with explicit factoryId scoping in the service layer, exactly like every
+// other table in this codebase. NOT touched by the stoneos_copilot_ro role
+// or any LLM-generated SQL, and does NOT need Step 6A-style RLS — it isn't
+// part of what that role can query.
+model CopilotQueryLog {
+  id            String   @id @default(uuid())
+  factoryId     String   @map("factory_id")
+  factory       Factory  @relation(fields: [factoryId], references: [id])
+  userId        String   @map("user_id")
+  question      String
+  generatedSql  String?  @map("generated_sql")
+  rowCount      Int?     @map("row_count")
+  answer        String?
+  errorMessage  String?  @map("error_message")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@map("copilot_query_log")
 }
 
 model UtilityReading {

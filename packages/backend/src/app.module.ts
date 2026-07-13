@@ -5,8 +5,9 @@ import { SalesModule } from "./modules/sales/sales.module";
 import { ExpensesModule } from "./modules/expenses/expenses.module";
 import { TallyModule } from "./modules/tally/tally.module";
 import { AdminModule } from "./modules/admin/admin.module";
+import { CopilotModule } from "./modules/copilot/copilot.module";
 
 @Module({
-  imports: [InventoryModule, ProductionModule, SalesModule, ExpensesModule, TallyModule, AdminModule],
+  imports: [InventoryModule, ProductionModule, SalesModule, ExpensesModule, TallyModule, AdminModule, CopilotModule],
 })
 export class AppModule {}

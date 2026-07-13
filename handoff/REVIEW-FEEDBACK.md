@@ -1,3 +1,216 @@
+# Review Feedback — Step 6B — AI Copilot: Gemini integration + owner-only chat page
+Date: 2026-07-13
+Ready for Builder: YES
+
+---
+
+## Summary
+
+This step executes real, LLM-generated SQL against real tenant data through Step 6A's RLS
+foundation, so I treated the execution path with the same seriousness as Step 6A itself and did
+not take Bob's report on faith anywhere it mattered. I read every file in the module directly, ran
+my own adversarial SQL-validator test battery beyond Bob's 34, and — most importantly — ran my own
+independent live adversarial test of the `set_config(..., true)` / pooled-connection question
+against real Postgres, using the actual compiled `CopilotService.executeScoped`, not a
+reimplementation and not Bob's script. **I found no Must Fix.** I found one real, non-blocking
+functional gap in the SQL validator (rejects legitimate `WITH ... SELECT` CTEs) that I'm escalating
+as a product question, not a security defect — it fails closed, not open.
+
+---
+
+## Independent Verification — the one thing that matters most: `set_config` vs. pooled connections
+
+Read `packages/backend/src/modules/copilot/copilot.service.ts:167-202` (`executeScoped`) directly.
+Confirmed genuinely implemented as claimed: `BEGIN` → `SELECT set_config('app.current_factory_id',
+$1, true)` (parameter-bound, not string-interpolated) → `SET LOCAL statement_timeout = '5s'` → the
+validated query → `COMMIT`, with `ROLLBACK` + rethrow on any error, `client.release()` in a
+`finally`. This is a `pg.Pool`, not a single connection — exactly the pooled-reuse scenario the
+brief was worried about.
+
+**Postgres semantics check:** `set_config(setting_name, new_value, is_local)` with `is_local =
+true` is documented Postgres behavior, not a Bob-invented pattern — it is the parameterizable
+equivalent of `SET LOCAL` specifically because Postgres's `SET` command syntax doesn't accept bind
+parameters for its value. `is_local = true` scopes the change to the current transaction exactly
+like `SET LOCAL`, reverting automatically at `COMMIT` or `ROLLBACK`. I did not just accept this from
+documentation — I proved it empirically below.
+
+**My own adversarial live test** (`scratchpad/richard-copilot-adversarial-test.js`, not committed,
+cleaned up after): loaded the real compiled `dist/modules/copilot/copilot.service.js`, instantiated
+`CopilotService` with a stub Prisma (only `copilotQueryLog.create` stubbed — everything else is the
+real class), then **forced the pool to `max: 1`** so two consecutive requests are *guaranteed* to
+reuse the exact same physical connection, not merely "might." Seeded two disposable factories
+(`Richard Test Factory A`/`B`) directly in `factory`, cleaned up completely afterward (verified 0
+rows remain).
+
+- Request A (factory A) via the real `executeScoped`: saw exactly its own row. PASS.
+- **Between-request probe** — on the same now-released connection, before request B does anything
+  at all, queried `current_setting('app.current_factory_id', true)` directly, outside any
+  transaction: returned `""` (empty/unset), not factory A's id. This is the specific leak a bare
+  `SET` would produce and it does not happen here. PASS.
+- Request B (factory B) via the real `executeScoped`, same forced connection: saw exactly its own
+  row, zero factory-A data. PASS.
+- 20 rapid alternating A/B/A/B... requests on the same `max:1` pool: 20/20 correctly scoped, zero
+  cross-tenant leakage.
+- **Error/rollback path specifically** (not in Bob's own script): ran a deliberately broken query
+  (`SELECT * FROM this_table_does_not_exist_xyz`) under factory A's scope on the forced `max:1`
+  pool, forcing the `catch` → `ROLLBACK` path, then immediately ran a real query under factory B on
+  the same connection. Result: factory B saw only its own row — confirms `ROLLBACK` (not just
+  `COMMIT`) also correctly discards the transaction-local `set_config`, so an errored/malformed
+  Gemini-generated query can't leave the connection in a state that leaks scoping to the next
+  request either.
+
+**Conclusion: independently confirmed, not just accepted.** `set_config(..., true)` inside
+`BEGIN`/`COMMIT` (or `BEGIN`/`ROLLBACK`) genuinely behaves identically to `SET LOCAL` for this
+purpose — it does not leak forward on connection reuse, on the happy path or the error path. This
+is the single most important correctness question in this step and it holds up under my own
+adversarial testing, not just Bob's.
+
+---
+
+## Independent Verification — SQL validator
+
+Read `packages/backend/src/modules/copilot/sql-validator.ts` in full. Ran my own 10-case adversarial
+battery (`scratchpad/richard-sql-validator-adversarial.js`) against the real compiled function,
+beyond Bob's 34 cases:
+
+- Sneaky block-comment hiding a semicolon + stacked `DROP` — correctly rejected.
+- Semicolon embedded only inside a harmless comment (no real second statement) — rejected (an
+  acceptable false positive by design; the validator deliberately isn't a string/comment-aware
+  parser, and failing closed here is the correct trade-off, not a bug).
+- Mixed-case keyword smuggled inside a trailing comment (`-- dRoP TABLE expense`) — correctly
+  rejected; the keyword scan intentionally covers the whole string including comments.
+- Mixed-case `SeLeCt` prefix — correctly accepted.
+- `UNION`-based multi-`SELECT` (legitimate, no stacked statement) — correctly accepted, confirming
+  the validator isn't confusing "multiple SELECTs via UNION" with "stacked queries."
+- Forbidden keyword smuggled inside a string literal value (e.g. `to_whom = 'please DELETE
+  reminder'`) — rejected. Confirmed as a known, accepted false positive (word-boundary matching
+  scans the whole body, not just outside string literals) rather than a bug — matches the brief's
+  own design intent ("not a full SQL-string-literal-aware parser").
+- Identifiers containing forbidden keywords as substrings (`reset_at`, `asset_tag`,
+  `offset_value`) — correctly **not** flagged; confirmed the `\b` word-boundary regex treats
+  underscore as a word character in JavaScript, so `SET` doesn't false-match inside `offset` or
+  `asset` or `reset_at`. This directly answers the "does it false-positive on legitimate column
+  names" question.
+- Nested `WITH` inside a subquery, with the outer statement still starting with `SELECT`
+  (`SELECT * FROM (WITH t AS (...) SELECT * FROM t) sub`) — correctly accepted; no bypass here,
+  the validator isn't fooled in the dangerous direction.
+
+**One real finding, not a bypass, a false rejection:** a top-level `WITH ... AS (...) SELECT ...`
+CTE — the exact case the review brief called out by name — is **rejected** by
+`validateGeneratedSql`, both with and without a leading comment before the `WITH`. Traced why:
+`copilot.service.ts:88` requires `/^select\b/i` after `stripLeadingComments`, with no accommodation
+for a leading `WITH`. This is not a security bug (fails closed — a legitimate query gets a "couldn't
+safely answer" response, not a bypass), and it is not a deviation from the brief's literal text
+("must start with SELECT... after trimming whitespace/comments") — Bob built exactly what was
+specified. But it is a real, verified functional gap: any business question whose natural SQL
+answer involves a CTE (e.g. compute per-factory or per-variety totals in a `WITH` before a final
+`SELECT` — a completely ordinary shape for exactly the aggregation-heavy questions this business
+will ask) will be silently rejected today, and the Owner will just see "I couldn't safely answer
+that — try rephrasing" with no indication why. See Escalate to Architect below — I'm not treating
+this as Bob's error, since he matched the brief precisely, but the brief's literal wording produces
+a real product gap that's worth a conscious decision rather than silent acceptance.
+
+---
+
+## Independent Verification — everything else checked directly, not from Bob's summary
+
+- **`@Roles("owner")` only** — confirmed `copilot.controller.ts:18` has exactly `@Roles("owner")`,
+  no `"admin"`. Read `RolesGuard.canActivate` (`common/guards/roles.guard.ts`) directly: it's a
+  strict `requiredRoles.includes(userRole)` check with no admin-implies-owner fallback anywhere in
+  the guard — `"owner"` genuinely means owner-only at the code level, not just by convention.
+- **`CopilotQueryLog` has no RLS** — read the migration
+  (`packages/backend/prisma/migrations/20260713010000_copilot_query_log/migration.sql`) directly:
+  pure additive `CREATE TABLE` + one `ALTER TABLE ... ADD CONSTRAINT` FK, zero RLS/policy
+  statements. Queried the live DB directly (not trusting the file): `has_table_privilege(
+  'stoneos_copilot_ro', 'copilot_query_log', 'SELECT')` → `false`, and `pg_class.relrowsecurity`
+  for `copilot_query_log` → `false`. Also grepped the Step 6A migration for any `ALTER DEFAULT
+  PRIVILEGES` that could have silently granted this role access to future tables — none exists.
+  Confirmed by direct query that the table has exactly the expected columns/types/nullability live.
+- **Startup RLS-coverage assertion (35-table list, verbatim copy)** — read
+  `copilot-readiness.service.ts:10-48`'s `EXPECTED_RLS_TABLES` and diffed it by hand, in order,
+  against the Step 6A migration's `GRANT SELECT ON (...)` table list
+  (`20260713000000_copilot_rls_readonly_role/migration.sql:29-64`): all 35 names match in the same
+  order — genuinely copied verbatim, not re-typed and coincidentally correct. Confirmed the readiness
+  check queries `pg_class`/`pg_policies` directly via `Prisma.join` (parameterized `IN (...)`, no
+  string interpolation of the table list itself, though the list is a hardcoded constant so this is
+  belt-and-suspenders rather than a real injection risk). Confirmed on failure it only sets
+  `this._ready = false` on the module's own service — never throws out of `onModuleInit`, so a
+  missing-RLS table cannot crash the whole app, only gate `/copilot/ask` via
+  `CopilotController`'s `this.readiness.ready` check passed into `service.ask(...)`.
+- **Error handling — no raw errors reach the frontend.** Traced every exit path in
+  `copilot.service.ts`'s `ask()`: readiness failure, `generateSql` failure, validation failure,
+  `executeScoped` failure, `formatAnswer` failure are each individually wrapped in `try`/`catch`,
+  each returns one of three fixed friendly strings, and the real detail (`e.message`, validation
+  `reason`, etc.) only ever goes into `logAttempt`'s `errorMessage` field (a `CopilotQueryLog` row)
+  and `this.logger.error/warn` — never into the HTTP response. Confirmed no custom global exception
+  filter exists in `main.ts` that could leak stack traces on an unexpected exception either — Nest's
+  default behavior for an uncaught error is `{"statusCode":500,"message":"Internal server error"}`,
+  no detail. `logAttempt` itself is wrapped in its own `try`/`catch` so a broken audit write can
+  never be what makes the request fail.
+- **Package.json / lockfile — additive only.** `git diff HEAD -- packages/backend/package.json`
+  shows exactly 3 lines added (`pg`, `@types/pg` dev, `@google/generative-ai`), zero lines
+  removed/changed. `git diff HEAD -- package-lock.json` (workspace root) confirms the same: every
+  changed lockfile entry is `pg` or one of its real transitive deps (`pg-pool`, `pg-protocol`,
+  `pg-connection-string`, `postgres-array`, etc.) or `@google/generative-ai`/`@types/pg` — zero
+  removed lines anywhere in the lockfile diff, confirming no unrelated package was bumped.
+- **Frontend gate.** Read `packages/frontend/app/copilot/page.tsx` in full: `role !== "owner"` →
+  placeholder (admin included in the placeholder branch, narrower than dashboard's gate, matching
+  the brief). `git diff` on `AppNav.tsx` shows exactly a 2-line addition: `if (role === "owner")
+  links = [...links, { href: "/copilot", label: "Copilot" }]` — same conditional shape as the
+  existing "Team" link, correctly not reusing the `owner || admin` branch above it. Generated SQL
+  is shown per-answer via an expandable "Show query"/"Hide query" toggle, reusing `.mono`/`.ticket`/
+  `.field-input`/`.primary-btn` — no new CSS, confirmed no `globals.css` diff.
+- **Build verification — ran myself, not trusted from Bob's claim.** `npx tsc --noEmit` clean in
+  both `packages/backend` and `packages/frontend`. `npm run build` clean in both — backend `nest
+  build` exit 0; frontend `next build` compiled successfully, all 11 routes generated including
+  `/copilot`, matching Bob's reported route list.
+- **Port 4000 stale-process claim** — sanity-checked, not deeply investigated per the review scope.
+  The backend's own `main.ts:7` defaults to `process.env.PORT ?? 4000` — port 4000 is this app's own
+  configured port, not some unrelated resource this step would need for a different reason, so a
+  stale leftover `nest`/`node` process squatting on it is an entirely ordinary dev-environment
+  artifact, plausible on its face. Nothing currently listening on port 4000 at review time. No
+  further action needed.
+
+---
+
+## Must Fix
+None.
+
+## Should Fix
+None requiring inline action — see Escalate below for the one open item, which is a product
+question rather than a code defect Bob should just fix.
+
+## Escalate to Architect
+- **Should the SQL validator accept a top-level `WITH ... AS (...) SELECT ...` CTE?** Independently
+  confirmed (see above) that `sql-validator.ts` currently rejects any generated SQL that starts with
+  `WITH` instead of `SELECT`, exactly matching the brief's literal wording but producing a real
+  functional gap: legitimate CTE-shaped answers to ordinary business questions get silently
+  rejected with a generic "couldn't safely answer" message. This is not a security concern — allowing
+  `WITH` as an additional accepted prefix does not reopen any write path, because the existing
+  forbidden-keyword scan already checks the *entire* SQL body (not just after the prefix) for
+  `INSERT`/`UPDATE`/`DELETE`/etc., so a data-modifying CTE (`WITH x AS (DELETE FROM ... RETURNING
+  ...) SELECT ...`) would still be caught by that scan regardless of what prefix is accepted. The
+  fix, if wanted, is small and low-risk (accept `^\s*with\b` in addition to `^\s*select\b` for the
+  start-of-statement check) — but whether to widen scope here at all, given the brief's explicit
+  literal wording, is a product call, not something I'll decide unilaterally at the code level.
+
+## Cleared
+Read the full Copilot module (`copilot.service.ts`, `sql-validator.ts`,
+`copilot-readiness.service.ts`, `copilot.controller.ts`, `copilot.module.ts`,
+`copilot-schema-context.ts`), the new migration, the `schema.prisma`/`package.json`/`.env.example`/
+`AppNav.tsx`/`app.module.ts` diffs, and the frontend `/copilot` page, line by line — not from Bob's
+summary alone. Independently reproduced, with my own adversarial tests against real local Postgres
+using the actual compiled code (not reimplementations), that `set_config('app.current_factory_id',
+$1, true)` inside `BEGIN`/`COMMIT` (and `BEGIN`/`ROLLBACK`) genuinely cannot leak one caller's
+factory scoping to the next request on a reused pooled connection — this was the single most
+important thing to verify and it holds. `@Roles("owner")` is genuinely owner-only at the guard
+level. `CopilotQueryLog` genuinely has no RLS and is genuinely unreachable by `stoneos_copilot_ro`.
+The 35-table readiness list is a verbatim, in-order copy of Step 6A's migration. Raw Postgres/
+validation errors never reach the frontend. Package/lockfile changes are additive-only. `tsc
+--noEmit` and `npm run build` are independently clean in both packages. Safe to merge.
+
+---
+
 # Review Feedback — Step 6A — Copilot database safety foundation (RLS + read-only role)
 Date: 2026-07-13
 Ready for Builder: YES

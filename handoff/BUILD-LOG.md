@@ -5,23 +5,31 @@
 
 ## Current Status
 
-**Active step:** Step 6A — Copilot database safety foundation (RLS + read-only Postgres role) —
-**BUILT, AWAITING REVIEW.** First of two steps building the AI Business Analyst / Copilot (README
-item #10). Direction conversation with the Owner settled: in-app chat Q&A, owner-only, free-form
-LLM-generated SQL (Owner's explicit choice over the safer tool-calling alternative I recommended),
-Google Gemini (not Anthropic, to avoid a new paid API key), mitigated by Postgres Row-Level
-Security as the real safety boundary rather than trusting generated SQL to self-scope. Step 6A
-builds and proves the RLS foundation in isolation (35 tenant-scoped tables — see Step 6A entry
-below for a table-count discrepancy found in the brief — no NestJS/LLM/frontend code yet); Step
-6B (Gemini integration + chat UI) only starts once 6A is reviewed clean. See
-`handoff/ARCHITECT-BRIEF.md` for the full brief and `handoff/REVIEW-REQUEST.md` for full
-verification results.
+**Active step:** Step 6B — AI Copilot: Gemini integration + owner-only chat page — **BUILT,
+AWAITING REVIEW.** Second and final step of the AI Business Analyst / Copilot (README item #10);
+Step 6A (RLS + `stoneos_copilot_ro` read-only role, 35 tenant-scoped tables) merged ahead of this
+step per the Architect Brief. This step wires up the actual feature: `POST /copilot/ask`
+(owner-only) sends the question + a hand-built schema description to Gemini, gets back one SQL
+`SELECT`, validates it, executes it through the `stoneos_copilot_ro` role with
+`app.current_factory_id` scoped via `SET LOCAL` (through `set_config(..., true)`) inside an
+explicit transaction, sends the result back to Gemini for a plain-language answer, and logs every
+attempt (success or failure) to a new `CopilotQueryLog` table. A startup RLS-coverage assertion
+fails only the Copilot module's own readiness (never the whole app) if any of the 35 expected
+tables is missing RLS. Frontend: owner-only chat page at `/copilot` with an expandable "show
+query" per answer. No Gemini API key exists anywhere in this environment (confirmed before this
+step started) — the SQL validator, RLS-scoped execution path, readiness check, and full
+non-Gemini orchestration were all live-tested against real local Postgres; the two literal Gemini
+calls (`generateSql`/`formatAnswer`) are implemented against the real SDK but unverified
+end-to-end. See `handoff/ARCHITECT-BRIEF.md` for the full brief and `handoff/REVIEW-REQUEST.md`
+for full verification results.
 
-**Previously:** Steps 5A, 5B, 5C, and 5D all cleared and merged 2026-07-12 (built in parallel in
-isolated worktrees, one per step). 5D merged last, per plan, after fixing a dual-React-copy
-dependency issue Richard's review surfaced; the fix was confirmed against a real Docker build on
-2026-07-13.
-**Last cleared:** Step 5D (Next.js 15.5.20 → 16.2.10) — reviewed clean (0 Must Fix), one
+**Previously:** Step 6A (Copilot RLS + read-only role) merged ahead of this step. Steps 5A, 5B,
+5C, and 5D all cleared and merged 2026-07-12 (built in parallel in isolated worktrees, one per
+step). 5D merged last, per plan, after fixing a dual-React-copy dependency issue Richard's review
+surfaced; the fix was confirmed against a real Docker build on 2026-07-13.
+**Last cleared:** Step 6A — see its Step History entry below for full verification detail
+(11/11 checks passed against real local Postgres). Before that, Step 5D (Next.js 15.5.20 →
+16.2.10) — reviewed clean (0 Must Fix), one
 significant Should Fix escalated (dual React copies in the production build artifact from a
 `lucide-react` peer-range conflict blocking React 19's hoisting) fixed directly by the Architect
 via npm `overrides` in both the root and `packages/frontend` package.json files (the Docker
@@ -865,7 +873,166 @@ confirmed not superuser/no BYPASSRLS/no CREATEDB/no CREATEROLE. Pre-existing pro
 untouched before and after, via row-count snapshot. All seeded test data (two disposable factories
 and their child rows) cleaned up at the end of the script.
 
-**Step 6A is BUILT, AWAITING REVIEW — do not start Step 6B until this clears.**
+**Step 6A cleared and merged** (per the Architect Brief for Step 6B, which references it as
+merged `94baf27`) — Step 6B (below) builds on top of it.
+
+---
+
+### Step 6B — AI Copilot: Gemini integration + owner-only chat page — BUILT, AWAITING REVIEW
+*Date: 2026-07-13*
+
+Files changed:
+- `packages/backend/prisma/schema.prisma` — added `CopilotQueryLog` model + inverse
+  `Factory.copilotQueryLogs` relation. Normal PrismaService-scoped table, explicitly NOT given
+  Step 6A-style RLS (it isn't part of what `stoneos_copilot_ro` can query — see the brief).
+- `packages/backend/prisma/migrations/20260713010000_copilot_query_log/migration.sql` (new) —
+  additive `CREATE TABLE` + FK. Generated via `prisma migrate diff --from-schema-datamodel
+  --to-schema-datamodel --script` (a pure two-file schema diff, no DB connection) rather than
+  `prisma migrate dev`, because `_prisma_migrations` in the live dev DB has unresolved drift
+  predating this step (see "Migration generation approach" in the Builder Plan section of
+  `handoff/ARCHITECT-BRIEF.md` for the full reasoning) — applied directly via `psql` against the
+  live dev DB, same verified pattern Step 6A used.
+- `packages/backend/package.json` — added `pg` + `@types/pg` (dev) + `@google/generative-ai`.
+- `packages/backend/src/modules/copilot/sql-validator.ts` (new) — pure `validateGeneratedSql()`:
+  rejects multi-statement SQL (semicolon followed by non-whitespace), non-SELECT statements, and
+  any of INSERT/UPDATE/DELETE/DROP/ALTER/TRUNCATE/GRANT/REVOKE/CREATE/COPY/EXECUTE/CALL/DO/
+  VACUUM/SET (word-boundary matched); appends `LIMIT 500` only if the query has none.
+- `packages/backend/src/modules/copilot/copilot-schema-context.ts` (new) — hand-built schema
+  description sent to Gemini; 31 of the 35 RLS-protected tables (excludes `raw_block_photo`,
+  `slab_photo`, `block_state_transition`, `slab_state_transition` per the brief's own
+  noise-exclusion examples), carrying forward the RECOVERY RATIO, PROVISIONAL-ONLY
+  (`slab.length_ft`/`width_ft`), always-sellable-after-polish, and SIMPLIFIED slab-registration
+  business notes (the last one lives in README.md, not schema.prisma — brief didn't specify
+  which file; confirmed by search this is where it actually is), plus a caveat on
+  `payment.invoice_id` nullability from Step 6A's migration comment.
+- `packages/backend/src/modules/copilot/copilot-readiness.service.ts` (new) — startup
+  `OnModuleInit` RLS-coverage assertion against `EXPECTED_RLS_TABLES`, copied verbatim from Step
+  6A's migration file (not re-derived). Queries `pg_class`/`pg_policies` directly via
+  `PrismaService.$queryRaw`. On any gap, fails only this module's own `ready` flag (never throws,
+  never crashes the app) and logs loudly.
+- `packages/backend/src/modules/copilot/copilot.service.ts` (new) — orchestrates
+  generateSql → validate → executeScoped → formatAnswer → log, every path logged. `executeScoped`
+  runs `BEGIN; SELECT set_config('app.current_factory_id', $1, true); SET LOCAL
+  statement_timeout = '5s'; <validated SELECT>; COMMIT` (rolling back on any error) through a
+  `pg` `Pool` connected via `COPILOT_DATABASE_URL` — the exact `set_config(..., true)` pattern
+  Step 6A's own smoke test already proved, chosen over string-interpolating `SET LOCAL ... = '...'`
+  because Postgres's `SET` command doesn't accept bind parameters for its value.
+- `packages/backend/src/modules/copilot/copilot.controller.ts` (new) — `POST /copilot/ask`,
+  `@UseGuards(ClerkAuthGuard, RolesGuard)`, `@Roles("owner")` only (narrower than the
+  dashboard/admin "owner or admin" pattern — the Owner's explicit choice per the brief).
+- `packages/backend/src/modules/copilot/copilot.module.ts` (new), `src/app.module.ts` — registers
+  `CopilotModule`.
+- `packages/frontend/app/copilot/page.tsx` (new) — owner-only chat page (placeholder for anyone
+  else, including admin), reusing `.ticket`/`.field-input`/`.primary-btn`/`.mono` with no new CSS;
+  expandable "show query" per answer.
+- `packages/frontend/components/AppNav.tsx` — added an owner-only "Copilot" nav link (same
+  conditional pattern as "Team").
+- `.env.example` — `COPILOT_DATABASE_URL` uncommented/documented as now wired up; added
+  `GEMINI_API_KEY` placeholder.
+- `packages/backend/.env` (gitignored, local only) — added a real `COPILOT_DATABASE_URL` pointing
+  at `stoneos_copilot_ro` for local dev/testing.
+- Scratchpad (throwaway, not committed): `test-sql-validator.js`, `test-copilot-rls-execution.js`,
+  `test-copilot-readiness.js`, `test-copilot-ask-flow.js` — see verification detail in
+  `handoff/REVIEW-REQUEST.md`.
+
+Decisions made:
+1. **Migration generated via schema-diff, not `prisma migrate dev`** — see file list above and
+   the Builder Plan; avoids fighting pre-existing, unrelated migration-history drift
+   (`tally_voucher_item` doesn't exist in the live dev DB yet — Step 6A's KG-8, not this step's
+   problem to fix).
+2. **Table inclusion/exclusion for the Gemini schema context is a judgment call, flagged per the
+   brief's instruction**: 31 of 35 included; the 4 excluded are the brief's own suggested
+   examples of safe-to-exclude noise (photo URL tables, internal state-transition audit logs).
+   Nothing a real business question could plausibly need was excluded.
+3. **`set_config('app.current_factory_id', $1, true)` used instead of literal `SET LOCAL
+   app.current_factory_id = '...'`** — Postgres's `SET` command doesn't support bind parameters
+   for its value; `set_config()` is a normal function call and does. Functionally identical to
+   `SET LOCAL` when `is_local = true` and run inside a transaction (Step 6A's own verification
+   script already used and proved this exact pattern).
+4. **No test framework exists anywhere in this repo** (checked before building) — the SQL
+   validator was verified with a throwaway Node script against the real compiled output rather
+   than introducing Jest as unrequested scope, matching Step 6A's own precedent of a throwaway
+   scratchpad verification script.
+
+Live verification performed (real local Postgres, `stoneos-postgres-1`, all seeded test data
+cleaned up afterward, pre-existing data confirmed untouched):
+- SQL validator: 34/34 cases passed against the actual compiled `sql-validator.js` — valid
+  SELECTs (with/without existing LIMIT, with leading comments/whitespace, multi-line
+  JOIN/GROUP BY), stacked-query injection (3 variants), every forbidden keyword (13 keywords,
+  each via a distinct query), and false-positive guards confirming legitimate column names like
+  `created_at`/`downtime_reason`/`invoiced_amount` don't trigger keyword rejection.
+- RLS-scoped execution path (`CopilotService.executeScoped`, called directly — the real compiled
+  method): 5/5 checks passed — cross-tenant isolation both directions (factory A sees only its
+  own row, factory B sees only its own, same query text), fail-closed zero-rows on a nonexistent
+  factory id, `statement_timeout` actually cancels a 6-second query under the 5s limit, and 8
+  alternating A/B requests on the same connection pool showed zero cross-tenant leakage
+  (confirms `SET LOCAL`/`set_config(..., true)` resets per-transaction as intended).
+- Startup RLS-coverage assertion (`CopilotReadinessService`, real `PrismaService.$queryRaw`
+  against real Postgres): correctly reports NOT ready and names exactly `tally_voucher_item`
+  (the one real, pre-existing gap — that table doesn't exist in this dev DB) as the sole problem
+  among all 35 expected tables — proving the check is precise, not just failing loudly.
+- Full `ask()` orchestration (real compiled service, real Postgres, only the two literal Gemini
+  network calls stubbed at that exact boundary): moduleReady=false path, validation-rejection
+  path (stacked-query SQL logged with the rejected text + real reason, friendly message to user),
+  and full success path (real RLS-scoped execution, correct row count and answer logged) all
+  verified — 7/7 checks passed.
+- `tsc --noEmit` and `npm run build` both clean in both packages.
+- Frontend: dev server boots, `/copilot` correctly redirects an unauthenticated session to
+  sign-in with no console errors — did not attempt a live authenticated walkthrough (would
+  require entering real Clerk credentials, which is out of scope for an automated build step).
+
+**Not live-tested** (no Gemini API key exists anywhere in this environment — confirmed before
+this step started, same as the brief states): `generateSql()` and `formatAnswer()`, Gemini's two
+actual LLM calls. Both are implemented against the official `@google/generative-ai` SDK and
+exercised structurally (return-value handling, error handling, prompt construction) but never
+actually invoked against Gemini's API.
+
+Open item for review: a stale/pre-existing `node` process was already listening on port 4000
+before this step (not started by this build) and returned 404 for `/copilot/ask`, meaning it
+predates this step's code and wasn't running with hot-reload picking up new files — left
+untouched rather than killed, since ownership/purpose of that process wasn't part of this step's
+scope. All backend verification above went through direct Node scripts against the same compiled
+code and real Postgres instead, not through that HTTP process.
+
+#### Step 6B Round 2 — Richard's review + Architect's validator fix
+*Date: 2026-07-13*
+
+Richard's review found 0 Must Fix (`Ready for Builder: YES`). Independently re-derived rather
+than trusted, on real infrastructure: read `copilot.service.ts`'s `executeScoped()` directly and
+confirmed it genuinely uses `BEGIN` → `SELECT set_config('app.current_factory_id', $1, true)` →
+`SET LOCAL statement_timeout` → query → `COMMIT`/`ROLLBACK` — then independently adversarially
+tested this against real local Postgres with the connection pool forced to `max: 1` (guaranteeing
+connection reuse across sequential requests), including a direct probe of
+`current_setting('app.current_factory_id', true)` *between* two factories' requests on the same
+physical connection (returned empty — no leak) and an error-path test (forced `ROLLBACK`,
+confirmed the next request on the same connection still wasn't contaminated). Also independently
+confirmed: `@Roles("owner")` is genuinely owner-only at the guard level; `CopilotQueryLog` has no
+RLS and is genuinely unreachable by `stoneos_copilot_ro` (checked live via
+`has_table_privilege`); the 35-table readiness list is a verbatim copy of Step 6A's migration;
+raw errors never reach the frontend; package.json/lockfile diffs are additive-only; `tsc
+--noEmit`/`npm run build` clean in both packages (re-run independently, not trusted from Bob's
+report).
+
+**One finding, escalated to Architect (Should Fix, not blocking):** Richard's own 10-case
+adversarial battery against the SQL validator (going beyond what the brief asked for) found that
+a top-level `WITH ... AS (...) SELECT ...` CTE was rejected — an exact, literal consequence of
+the brief's own "must start with SELECT" wording, not a Bob defect (Bob built exactly what was
+specified). Not a security bug — fails closed, no bypass possible — but a real usability gap:
+legitimate aggregation-style business questions using a CTE would get silently rejected.
+
+**Architect's fix**, applied directly (small, well-scoped, doesn't need a Bob round-trip):
+`sql-validator.ts`'s start-of-statement check now accepts `WITH` (including `WITH RECURSIVE`) as
+well as `SELECT`. This doesn't weaken anything — a data-modifying CTE (`WITH x AS (...) DELETE
+...`) still contains a forbidden keyword and gets rejected by the existing keyword scan, which
+scans the whole body regardless of which shape the statement takes; confirmed this explicitly
+with a `WITH x AS (SELECT id FROM expense) DELETE FROM expense WHERE id IN (SELECT id FROM x)`
+test case, correctly rejected with `Contains forbidden keyword: DELETE`. Verified with a 7-case
+regression pass against the compiled validator: 3 new CTE-shaped acceptance cases (plain CTE,
+`WITH RECURSIVE`, data-modifying CTE still rejected) plus 4 of the original rejection cases
+(DDL, stacked query, plain write, non-SELECT/WITH start) — 7/7 passed. `tsc --noEmit` and
+`npm run build` re-run clean after the change.
+
+**Step 6B is CLEARED — awaiting Owner go-ahead to merge.**
 
 ---
 

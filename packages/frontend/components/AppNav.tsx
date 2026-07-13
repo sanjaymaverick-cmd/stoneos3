@@ -16,7 +16,10 @@ export function AppNav() {
   const pathname = usePathname();
   const { user } = useUser();
   const role = user?.publicMetadata?.role as string | undefined;
-  const links = role === "owner" || role === "admin" ? [...LINKS, { href: "/admin/users", label: "Team" }] : LINKS;
+  let links = role === "owner" || role === "admin" ? [...LINKS, { href: "/admin/users", label: "Team" }] : LINKS;
+  // Owner only — narrower than "Team" above. The Owner's explicit choice for
+  // this feature, not an oversight.
+  if (role === "owner") links = [...links, { href: "/copilot", label: "Copilot" }];
 
   return (
     <div className="nav-links">

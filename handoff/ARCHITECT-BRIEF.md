@@ -199,3 +199,87 @@ it threatens, not about taking down Sales/Expenses/Production over it.
 
 ## Builder Plan
 *Builder adds their plan here before building. Architect reviews and approves.*
+
+**Bob, 2026-07-13.** Read BUILDER.md, this brief, the Step 6A BUILD-LOG entry, and the RLS
+migration SQL directly. Proceeding without a pause per the task instruction (not waiting for
+a reply this run). Plan:
+
+**Migration generation approach (deviates from a plain `prisma migrate dev` call — flagging
+why up front):** `_prisma_migrations` in the live dev DB only has 3 rows applied
+(`20260709122654_init`, `20260711114711_opening_balance_provenance`, and a rolled-back
+`20260711120000_factory_workflow_model`). Both `20260712000000_tally_voucher_item` and
+`20260713000000_copilot_rls_readonly_role` exist as folders on disk but are **not** tracked
+as applied — confirmed directly: `tally_voucher_item` the table doesn't even exist in the
+live DB (pre-existing drift, not mine to fix — this is Step 6A's KG-8, out of scope here),
+while `stoneos_copilot_ro` the role and 34/35 RLS policies *do* exist (applied by hand via
+psql, per Step 6A's own log). Running `prisma migrate dev` would try to reconcile all of
+that pending/drifted history — including replaying `CREATE ROLE stoneos_copilot_ro` a second
+time, which would fail and could leave migration state stuck. Since Step 6A's own precedent
+here is "apply hand-verified SQL directly, don't fight the CLI over pre-existing drift," I'll
+do the same for this ordinary additive table: use `prisma migrate diff --from-schema-datamodel
+--to-schema-datamodel --script` between the old and new `schema.prisma` (a pure two-file diff,
+touches no DB, no drift risk) to generate Prisma-shaped SQL, place it in a normally-named
+migration folder, apply it directly against the live DB the same way Step 6A did, then
+`prisma generate`. Not hand-writing the SQL from scratch — the diff engine produces it, so
+it's still "normal Prisma," just not funneled through the drifted migration-history CLI path.
+
+**Backend:**
+1. `schema.prisma` — add `CopilotQueryLog` model exactly as specified + inverse relation on
+   `Factory`. Generate migration per above, apply, `prisma generate`.
+2. `package.json` — add `pg` + `@types/pg` (dev) + `@google/generative-ai`. `npm install`.
+3. `modules/copilot/`:
+   - `sql-validator.ts` — pure exported function, no NestJS dependency, so it's trivially
+     testable standalone (no test framework exists anywhere in this repo — following Step 6A's
+     precedent of a throwaway, uncommitted verification script rather than introducing Jest/etc.
+     as an unrequested scope addition. I'll build the backend and run a scratchpad Node script
+     against the compiled `dist/` output with a battery of example strings, real code under test).
+   - `copilot-schema-context.ts` — hand-built human-readable schema description (table/column
+     names, types, and the real business-meaning comments), not queried from `information_schema`
+     — the brief wants business context (comments), not a raw catalog dump.
+   - `copilot.service.ts` — orchestrates generateSql (Gemini call 1) → validate → execute (pg +
+     `stoneos_copilot_ro` + `BEGIN`/`SET LOCAL app.current_factory_id`/`SET LOCAL
+     statement_timeout`/query/`COMMIT`) → formatAnswer (Gemini call 2) → log to
+     `CopilotQueryLog`, every path.
+   - `copilot.controller.ts` — `POST /copilot/ask`, `@UseGuards(ClerkAuthGuard, RolesGuard)`,
+     `@Roles("owner")`.
+   - `copilot.module.ts` — `OnModuleInit` RLS-coverage assertion against the hardcoded 35-table
+     list copied verbatim from the Step 6A migration file; sets a readiness flag the controller
+     checks.
+4. Schema-context table inclusion/exclusion (flagging the judgment call now, will restate in
+   the review request): include all 35 RLS-protected tables **except** `raw_block_photo`,
+   `slab_photo` (URLs only) and `block_state_transition`, `slab_state_transition` (internal
+   audit logs) — the brief's own examples of safe-to-exclude noise. That leaves 31 tables,
+   covering production, inventory, sales, expenses, vehicles, customers, machines, and Tally
+   import data. Business-meaning notes to carry into the context: RawBlock's RECOVERY RATIO
+   comment, Slab.lengthFt/widthFt's PROVISIONAL-ONLY comment, Slab.qualityNote's
+   always-sellable-after-polish rule, CuttingSession.damagedSlabCount's cost-allocation note,
+   the SIMPLIFIED slab-registration flow (found in README.md, not schema.prisma — brief didn't
+   specify which file, this is where it actually lives), and a short caveat about
+   `payment.invoice_id` nullability (from Step 6A's migration comment) so Gemini doesn't
+   silently drop null-invoice payments in a join without realizing it.
+
+**Frontend:**
+5. `app/copilot/page.tsx` — owner-only via `useRole()` (placeholder for everyone else, same
+   pattern as `dashboard/page.tsx` but narrower: admin also gets the placeholder here). Chat
+   list of Q/A pairs, textarea + submit, loading state, expandable "show query" per answer.
+   Reuses `.ticket`/`.field-input`/`.primary-btn`/`.mono` — no new CSS.
+6. `AppNav.tsx` — add "Copilot" link, owner-only conditional (same pattern as "Team").
+
+**Testing plan (given no live Gemini key):**
+- SQL validator: real unit-style battery (valid SELECTs incl. one with existing LIMIT, one
+  without; stacked-query injection via `;`; each rejected keyword; comment-prefixed SELECT) run
+  against the actual compiled function, not a reimplementation.
+- RLS execution path: manually supply a SQL string in place of Gemini's output, run it through
+  the real `pg`-based execute-with-`SET LOCAL` path against the real local Postgres
+  (`stoneos-postgres-1`, confirmed running), using the real `stoneos_copilot_ro` role. Confirm
+  factory-scoped results, fail-closed on missing/wrong factory id, and that a bare-`SET`
+  regression would (hypothetically) leak — i.e. confirm the code path only ever uses `SET
+  LOCAL` inside `BEGIN`/`COMMIT`.
+- Startup RLS-coverage assertion: run it live against the real DB, confirm it correctly flags
+  `tally_voucher_item` as missing (real, pre-existing gap) without crashing the module, and
+  confirm the controller's readiness gate reacts to that.
+- Gemini calls themselves (`generateSql`/`formatAnswer`): implemented against the real SDK,
+  cannot be live-tested (no API key anywhere in this environment, per the brief's own check).
+  Will state this plainly in the review request.
+
+Proceeding to build now.
