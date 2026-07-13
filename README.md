@@ -100,7 +100,7 @@ smoke test: `docker compose -f docker-compose.prod.yml up --build`.
 | Frontend Sales page | Built — `/sales`: new order form with dynamic line items, customer picker with quick-add, recent orders list |
 | Frontend Expenses page | Built — `/expenses`: add-expense form with category-driven vehicle field, quick-add vehicle, recent expenses list |
 | Shared design system | `app/globals.css` — extracted from the DPR artifact so every page matches without re-declaring styles; `components/AppNav.tsx` links Dashboard/Production/Sales/Expenses |
-| Dashboard | Placeholder only |
+| Dashboard | Built for owner/admin — `/dashboard` shows 5 real widgets (30-day sales/expense summary, active cutting sessions, raw block stock snapshot, recent activity), role-gated via `useRole()`, verified live in a browser. Every other role still sees a placeholder — role-based views for accountant/manager/supervisor/operator/auditor haven't been built yet |
 
 ## Multi-tenant enforcement
 
