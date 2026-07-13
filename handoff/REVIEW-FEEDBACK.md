@@ -1,3 +1,157 @@
+# Review Feedback — Step 6A — Copilot database safety foundation (RLS + read-only role)
+Date: 2026-07-13
+Ready for Builder: YES
+
+---
+
+## Summary
+
+I did not take Bob's report on faith. I re-derived the table list from `schema.prisma` myself,
+read the actual `migration.sql` line by line, queried the live Postgres instance directly (not
+through Bob's script), and ran my own adversarial checks beyond what the brief required —
+including a cross-tenant JOIN across two different child tables, a UNION ALL across two child
+tables, and fail-closed checks with an empty-string session variable and a garbage/non-matching
+session variable, not just an unset one. Every one of Bob's four flagged discrepancies checks out
+independently. I found no Must Fix. I found one real, non-blocking operational trap for whoever
+resolves KG-8, logged as Should Fix + escalated below.
+
+**This is safe to build Step 6B on top of.** The RLS foundation genuinely makes cross-tenant
+access structurally impossible for the 34 currently-existing tables, verified live, under
+adversarial conditions (joins, set operations, malformed session values), not just the happy path.
+
+---
+
+## Independent Verification — the 4 points
+
+**1. Table count (35, not 33).** I grepped every model in `packages/backend/prisma/schema.prisma`
+myself and independently classified each by whether it has its own `factory_id`/`id` column vs.
+needs a parent-FK traversal. Result: 18 tables with a direct `factory_id` column + `factory` itself
+(scoped by `id`) = **19 direct**; 16 child tables each traced to a real, correct parent-FK chain
+ending at a `factory_id` = **16 child**. Total 35, matching the 35 models in the schema exactly,
+with no table left uncovered on either side. This independently confirms Bob's count and every
+specific table name/FK relationship Bob listed — this was not "35 > 33 so it must be more
+thorough," it is a verified-correct enumeration.
+
+**2. The `::uuid` cast issue.** Read the actual `migration.sql`
+(`packages/backend/prisma/migrations/20260713000000_copilot_rls_readonly_role/migration.sql`):
+every one of the 35 policies (lines 152–312) compares as TEXT, no `::uuid` cast anywhere. I
+independently reproduced the failure Bob describes in a live scratch test
+(`GRANT`/comparison against `text`/`uuid` — confirmed Postgres has no implicit `text = uuid`
+operator). I also traced the fail-closed logic by hand: `NULLIF(current_setting(..., true), '')`
+returns `NULL` when the setting is unset, and separately I *live-tested* (not just reasoned about)
+the case where the setting is explicitly set to `''` and to a non-matching garbage string — both
+return zero rows, same as fully unset. The removal of the cast does not weaken fail-closed
+behavior in any scenario I could construct.
+
+**3. The reverted migration-drift workaround (KG-8).** Confirmed via `git status`/`git log`: no
+stray file changes outside the described surface (`.env.example`, the three `handoff/*.md` files,
+the new migration folder, and `scratchpad/smoke-test-copilot-rls.js`). Confirmed via direct DB
+query: `tally_voucher_item` does not exist in the live database (`\dt` shows exactly 34
+application tables plus `_prisma_migrations`), consistent with the DROP being applied cleanly and
+nothing left half-created. Confirmed the pre-existing baseline is **exactly** intact: `1 factory,
+2421 expense rows, 1 app_user` — I queried this myself after all my own test seeding/cleanup and
+it matches the number in BUILD-LOG's own prior baseline exactly. The stuck migration record
+`20260711120000_factory_workflow_model` in `_prisma_migrations` has a `rolled_back_at` timestamp
+of 2026-07-11 — two days before Step 6A started — confirming this drift predates Step 6A and
+wasn't newly introduced by Bob's attempt. The revert is complete and clean.
+
+**4. Live verification completeness (34/35).** Confirmed accurate, not overclaimed. I queried
+`pg_class`/`pg_policies` directly (scoped to the `public` schema, since this DB also has unrelated
+`codex_smoke`/`legacy_migration_test*` schemas that initially produced confusing duplicate-name
+noise in a naive query): exactly 34 tables have `RLS enabled + forced` and exactly one
+`tenant_isolation` policy each, matching the migration file's 34 non-`tally_voucher_item` policies
+one-for-one. `tally_voucher_item` is correctly absent from the live DB (table doesn't exist) —
+**but its policy is present and correct in the committed `migration.sql`** (lines 142–143,
+302–306), using the identical subquery pattern as its live-tested siblings
+(`tally_ledger_entry`/`tally_trial_balance_snapshot`). This is the important distinction the task
+asked me to nail down: it is written-but-untested, not silently missing. Confirmed by reading the
+file directly, not by trusting the summary.
+
+---
+
+## Additional Independent Checks (beyond the brief / Bob's script)
+
+Ran my own SQL script directly against the live DB (`stoneos-postgres-1`), seeding two disposable
+factories with overlapping-shaped data across `expense` (direct), `sales_line_item` (child via
+`sales_order`), and `payment` (child via `invoice`), then cleaning up completely:
+
+- Direct-table isolation (`expense`): PASS — only factory A's row visible.
+- Child-table isolation (`sales_line_item`, `payment`): PASS.
+- **Adversarial JOIN across two different child tables** (`sales_line_item` CROSS JOIN `payment`,
+  both via different parent chains): PASS — only the A×A pair returned, no B leakage from either
+  side of the join. RLS held under a join, not just single-table SELECTs.
+- **Adversarial UNION ALL** across the same two child tables: PASS — confirms the policy isn't
+  bypassable via set operations.
+- Fail-closed, unset session variable (direct + child table): PASS — zero rows.
+- Fail-closed, session variable explicitly set to `''`: PASS — zero rows (not in the brief's
+  required checks, added this myself since it's a distinct code path from "never set").
+- Fail-closed, session variable set to a non-matching garbage string: PASS — zero rows (relevant
+  because Step 6B's LLM-generated context could plausibly set this to something malformed;
+  confirms the policy fails closed on any non-matching value, not just the empty/unset case).
+- Write rejection: INSERT/UPDATE/DELETE all rejected with `permission denied for table expense`;
+  `DROP TABLE expense` rejected with `must be owner of table expense` — confirmed `expense` is
+  owned by `stoneos`, not `stoneos_copilot_ro`, before running this check, so there was no risk to
+  real data from the test itself.
+- Role attributes: `rolsuper=f`, `rolbypassrls=f`, `rolcreatedb=f`, `rolcreaterole=f` — confirmed
+  directly from `pg_roles`.
+- Schema scoping: `has_schema_privilege('stoneos_copilot_ro', ..., 'USAGE')` is `false` for
+  `codex_smoke`, `legacy_migration_test`, `legacy_migration_test_clean`, and `true` only for
+  `public` — confirms the role cannot see any table in the unrelated legacy schemas that happen to
+  live in the same database.
+- Grants: queried `information_schema.role_table_grants` directly — exactly 34 rows, all
+  `privilege_type = SELECT`, no other privilege type present anywhere.
+- Baseline data confirmed untouched after my own test run: 1 factory, 2421 expenses, 1 app_user.
+
+---
+
+## Must Fix
+None.
+
+## Should Fix
+- `handoff/BUILD-LOG.md` KG-8 entry — add an explicit remediation note for whoever resolves the
+  migration drift. I confirmed by hand that once `tally_voucher_item` exists, a blind
+  `npx prisma migrate deploy` will **not** cleanly pick up the copilot RLS migration: `CREATE ROLE
+  stoneos_copilot_ro` will error (`role already exists`) and every one of the 34 already-applied
+  `CREATE POLICY tenant_isolation` statements will error (`policy already exists`) before Postgres
+  ever reaches the `tally_voucher_item`-specific statements. `prisma migrate resolve --applied
+  20260713000000_copilot_rls_readonly_role` (which Bob's Open Question 5 already anticipates) does
+  solve the bookkeeping conflict, but it also means Prisma will *never* attempt those
+  `tally_voucher_item` statements again automatically. Whoever resolves KG-8 needs to manually run
+  the three `tally_voucher_item`-specific statements from `migration.sql` (lines 142–143,
+  302–306: `ENABLE ROW LEVEL SECURITY`, `FORCE ROW LEVEL SECURITY`, `CREATE POLICY`) by hand once
+  the table exists, and re-verify with a live smoke test before treating that table as protected.
+  Left undone, this table would silently sit unprotected — no error, just missing coverage — which
+  is exactly the kind of gap this step exists to prevent. Non-blocking for Step 6A (the delivered
+  migration file itself is complete and correct) but should be spelled out explicitly rather than
+  left implicit in "someone should run `prisma migrate resolve` + `prisma migrate deploy`."
+
+## Escalate to Architect
+- **Should Step 6B include a startup-time assertion that verifies RLS is enabled+forced and a
+  `tenant_isolation` policy exists on every table the Copilot is allowed to query, refusing to
+  serve any query if the check fails?** This is a genuine defense-in-depth question, not a code
+  bug: right now, correctness depends on someone remembering to do the manual `tally_voucher_item`
+  follow-up above (or the equivalent for any future new tenant-scoped table) before Step 6B ships
+  or before a new table is added later. A cheap runtime check (query `pg_policies` for the expected
+  table list at startup, or once per Copilot session) would turn "silently unprotected table" into
+  "Copilot refuses to start," which fits the stated bar for this feature ("nothing in Step 6B ships
+  if this step's guarantees aren't independently proven correct"). This is a product/process
+  decision about how much automated guarding Step 6B should carry, not something I can resolve at
+  the code level in Step 6A.
+
+## Cleared
+Reviewed `migration.sql` line-by-line, re-derived the full 35-table list independently from
+`schema.prisma`, and ran my own live adversarial verification (including cross-table joins, set
+operations, and malformed-session-variable cases beyond the brief's required checks) against the
+real Postgres instance — the `stoneos_copilot_ro` role is SELECT-only with no write/DDL/superuser/
+BYPASSRLS access, RLS is enabled and forced with correct fail-closed text-comparison policies on
+all 34 currently-existing tenant-scoped tables (and correctly written but untested for the 35th,
+`tally_voucher_item`, which doesn't exist yet due to a pre-existing, unrelated migration-drift
+issue that Bob correctly identified, correctly avoided working around, and correctly reverted
+without disturbing production-like data), and the `payment.invoice_id` nullability gap is
+documented, not silently patched. Cleared for Step 6B to build on.
+
+---
+
 # Review Feedback — Step 5A (Recovery ratio report)
 Date: 2026-07-12
 Ready for Builder: YES
