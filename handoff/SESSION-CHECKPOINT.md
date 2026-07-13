@@ -17,18 +17,29 @@ changes actually integrate correctly together, not just individually. All pushed
 
 README's original "Close out remaining gaps" next-steps list is now fully closed except for two
 items, both intentionally left open (see below): #6's real-data verification, and role-based
-dashboards beyond owner/admin.
+dashboards beyond owner/admin. README itself was updated to reflect all of this (items #4-#6
+marked done, Tally import row corrected from "Stubbed" to "Built").
+
+After the checkpoint above was first written, a `/graphify` knowledge-graph build of the repo
+(665 nodes, 1146 edges, 40 communities — output in `graphify-out/`, untracked/local) caught a
+genuine stale doc: README's "What's built vs. stubbed" table still said "Dashboard | Placeholder
+only" even though Step 4 (weeks earlier) shipped a real owner/admin dashboard. Fixed directly.
+The graph also traced two "god nodes" (`RawBlockService`, `PolishingSessionService`) — one
+(`RawBlockService`) is a genuine single-responsibility-erosion candidate worth watching (CRUD +
+state transitions + two bolted-on report methods); the other's high degree turned out to be a
+graphify AST extraction bug (two controller classes in `session.controllers.ts` share the
+identifier `service` for their injected dependency, and the extractor misattributed
+`CuttingSessionController`'s 5 method calls to `PolishingSessionService`) — confirmed by reading
+the actual source, not a real code issue.
 
 **Repo:** `origin` is `https://github.com/sanjaymaverick-cmd/stoneos3.git`. Local `main` and
-`origin/main` are identical at `be4a1d1`. CI/CD deploy workflow remains disabled
-(`deploy.yml.disabled`) — none of this session's pushes triggered any side effect.
+`origin/main` are identical at `704e72e`, confirmed synced both directions. CI/CD deploy
+workflow remains disabled (`deploy.yml.disabled`) — none of this session's pushes triggered any
+side effect.
 
-**Worktrees:** all four (`recovery-ratio-report`, `slab-dimension-overrides`,
-`tally-item-detail`, `nextjs-16-upgrade`) are merged and safe to remove — this is the very next
-housekeeping step if resuming immediately. `git worktree remove worktrees/<name>` from the main
-checkout for each, then `git branch -d <branch>` for the four now-merged branches
-(`feat/recovery-ratio-report`, `feat/slab-dimension-overrides`, `feat/tally-item-detail`,
-`chore/nextjs-16-upgrade`).
+**Worktrees:** all four are already cleaned up (removed + branches deleted) — confirmed via
+`git worktree list` (only the main checkout remains) and `git branch -a` (only `main`). This is
+done, not a pending action.
 
 **Local Postgres state:** unchanged this session — no code from any of the four steps was
 exercised against a live database at any point (no worktree had a reachable `DATABASE_URL`;
@@ -98,10 +109,10 @@ hot-reload) is needed to pick this up if one was left running from a prior sessi
   build frontend` + smoke-test, as final confirmation of the dual-React-copy fix in an actual
   Docker build (not verifiable in this environment — no Docker available here).
 - Role-based dashboard views beyond owner/admin — not started, no brief written yet.
-- Worktree cleanup (see "Worktrees" above) — housekeeping, not urgent, but the natural next
-  action if resuming immediately.
 - Production/AWS: still no production environment exists at all. Unchanged from prior sessions —
   see `project-stoneos-production-deploy-hold` memory.
+- `graphify-out/` (knowledge graph build) is untracked/local — not in `.gitignore` either way;
+  no decision made on whether to commit it, gitignore it, or leave as-is. Low priority.
 
 ---
 
