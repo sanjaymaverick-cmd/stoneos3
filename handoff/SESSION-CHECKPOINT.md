@@ -38,30 +38,58 @@ the load-bearing claims directly against the live database (policy count, role p
 baseline) before pushing, since a system note flagged the safety classifier was unavailable
 during Richard's review. Everything checked out.
 
-**Known gap carried forward (KG-8, pre-existing and unrelated to this work):** a stuck migration
-record (from before this session) blocks the `tally_voucher_item` table from existing yet, so
-its RLS policy is written correctly in the migration but untested — the table just doesn't exist
-in the live DB right now. Richard flagged an operational trap for whenever KG-8 gets resolved: a
-routine `prisma migrate deploy` won't retroactively apply that table's RLS policy once the table
-finally gets created (it'll error on already-existing objects if the migration file is naively
-rerun) — someone has to manually apply those 3 statements, or that specific table could silently
-end up unprotected. **Planned mitigation for Step 6B:** a startup-time assertion that every
-expected tenant-scoped table actually has RLS enabled, so a gap like this fails loudly at boot
-instead of silently.
+**Step 6B (Gemini integration + owner-only chat page) is also DONE, reviewed clean, and
+merged/pushed.** Built on top of 6A: `POST /copilot/ask` (owner-only) takes a question, sends it
+plus a curated schema description to Gemini, validates the returned SQL (single statement,
+`SELECT` or `WITH`/CTE only, no write/DDL keywords, row-limited), executes it through the
+`stoneos_copilot_ro` role scoped via `SELECT set_config('app.current_factory_id', $1, true)`
+inside an explicit transaction, sends the result back to Gemini for a plain-language answer, and
+logs every attempt (success or failure) to a new `CopilotQueryLog` table for audit — deliberately
+outside Step 6A's RLS scope, since it's only ever touched through normal factoryId-scoped Prisma
+calls, never by the LLM-generated SQL. A startup-time assertion (the 35-table list copied
+verbatim from Step 6A's migration) fails only the Copilot module's own readiness if any expected
+table is ever missing RLS, without taking down the rest of the app — the planned mitigation for
+KG-8's operational trap. Frontend: owner-only chat page at `/copilot`, generated SQL shown
+expandable per answer for transparency. Richard independently re-verified the
+set_config/pooled-connection question with his own adversarial test (forced single-connection
+reuse via `max: 1`, probed the session variable *between* two factories' requests on the same
+physical connection, tested the rollback path) — confirmed no leak, not just accepted the
+description. One real gap found (CTEs rejected by an overly literal "must start with SELECT"
+check) was the brief's own wording, not a Bob defect — fixed directly by the Architect, confirmed
+a data-modifying CTE is still caught by the keyword scan regardless of the CTE-shape fix. Fully
+merged/pushed result re-verified with a clean `tsc --noEmit` + `npm run build` in both packages
+post-merge.
 
-**Next action:** write the Step 6B brief — the actual Gemini integration (question → generated
-SQL → validated → executed via the RLS-protected read-only role → natural-language answer),
-query logging for audit, and the owner-only chat page. Step 6A's Owner go-ahead only covered 6A
-itself; 6B needs its own go-ahead before merging, per the same deploy-gate discipline.
+**Known gap carried forward (KG-8, pre-existing and unrelated to Copilot work):** still open,
+unchanged — see prior entry below. Not scheduled to be resolved as part of this feature.
+
+**Gemini API key added and live-tested directly against Google's API** (not just assumed to
+work): authenticates correctly (`ListModels` returned `200 OK` with a real model list), but the
+account currently has **zero free-tier quota provisioned** for `generateContent` on every pinned
+model tried (`gemini-2.0-flash`, `gemini-2.0-flash-001` — consistent `429, limit: 0`), and
+`gemini-2.5-flash` is `404, no longer available to new users` (a newly-created account/key being
+steered toward `-latest` aliases), which are themselves hitting transient `503`/timeouts right
+now. **This is a Google-account-side provisioning issue, not a bug in the integration** — the
+code is correctly wired to whichever of `GEMINI_API_KEY`/`GOOGLE_API_KEY` ends up working once
+quota clears (check account status directly at aistudio.google.com). Key is stored in
+`packages/backend/.env` (gitignored, confirmed not tracked) — **the Owner should consider
+rotating/regenerating this key**, since it was pasted directly into the chat conversation and is
+therefore sitting in that conversation's history.
+
+**Next action:** once the Gemini quota issue is resolved (Owner's own step, on Google's side),
+do a real end-to-end live test of `/copilot/ask` — nothing has actually exercised the two live
+Gemini calls yet, everything else in the flow (validation, RLS-scoped execution, logging,
+readiness check) is independently verified. No further Copilot build work is planned until that
+live test happens and surfaces anything.
 
 **Repo:** `origin` is `https://github.com/sanjaymaverick-cmd/stoneos3.git`. Local `main` and
-`origin/main` are identical at `94baf27`, confirmed synced both directions (fetched and
+`origin/main` are identical at `7a79ac4`, confirmed synced both directions (fetched and
 compared, not just trusting push output). CI/CD deploy workflow remains disabled
 (`deploy.yml.disabled`).
 
 ---
 
-## What Was Decided This Session (2026-07-13, Copilot direction)
+## What Was Decided This Session (2026-07-13, Copilot direction + build)
 
 - **Query approach — free-form SQL over tool-calling:** the Owner's explicit, informed choice
   after being shown both options and the risk tradeoff. Mitigated with RLS rather than left as
@@ -76,9 +104,17 @@ compared, not just trusting push output). CI/CD deploy workflow remains disabled
   role, not application-layer scoping checks — makes the tenant-isolation guarantee hold even if
   the LLM-generated SQL forgets to filter by factory, rather than depending on prompt
   instructions being followed correctly every time.
-- **Step 6A built and reviewed in isolation before any Step 6B work starts** — deliberate
+- **Step 6A built and reviewed in isolation before any Step 6B work started** — deliberate
   sequencing given everything else depends on this foundation being correct; matches the
   anti-drift "one step at a time" rule especially strictly here given the security stakes.
+- **CTE support added to the SQL validator, Architect's direct fix after Richard's review** — the
+  brief's own literal "must start with SELECT" wording was too strict; fixed without weakening
+  the keyword-based write/DDL blocklist that still catches data-modifying CTEs regardless.
+- **Gemini API key pasted directly into chat by the Owner** — added to `.env` (gitignored) and
+  live-tested rather than assumed to work; flagged the rotation recommendation given it's now in
+  conversation history, per [[feedback-verify-before-declaring-unavailable]]'s spirit of
+  verifying rather than assuming, this time applied to verifying a credential actually works
+  rather than assuming a tool is unavailable.
 
 ---
 
@@ -86,7 +122,9 @@ compared, not just trusting push output). CI/CD deploy workflow remains disabled
 
 - Production/AWS: still no production environment exists at all. Unchanged from prior
   sessions — see `project-stoneos-production-deploy-hold` memory.
-- Step 6B (Copilot backend + chat UI) — not started, brief not yet written.
+- **Live end-to-end test of `/copilot/ask`** — blocked on the Gemini account's free-tier quota
+  provisioning clearing (Owner's own step, on Google's side, see above). Everything else in the
+  Copilot feature is built, reviewed, and independently verified.
 - KG-8 (stuck migration blocking `tally_voucher_item`) — pre-existing, unrelated to Copilot work,
   not scheduled to be resolved as part of this feature; Step 6B's startup RLS-coverage assertion
   is a mitigation for its downstream risk, not a fix for KG-8 itself.
