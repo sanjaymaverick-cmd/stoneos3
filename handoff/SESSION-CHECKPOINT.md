@@ -15,10 +15,11 @@ per plan), and the fully-merged result was verified end-to-end with a clean-rein
 changes actually integrate correctly together, not just individually. All pushed to
 `origin/main`.
 
-README's original "Close out remaining gaps" next-steps list is now fully closed except for two
-items, both intentionally left open (see below): #6's real-data verification, and role-based
-dashboards beyond owner/admin. README itself was updated to reflect all of this (items #4-#6
-marked done, Tally import row corrected from "Stubbed" to "Built").
+README's original "Close out remaining gaps" next-steps list is now fully closed. Items #4-#6
+are done and README reflects it (Tally import row corrected from "Stubbed" to "Built"). The two
+remaining loose ends — #6's real-data verification and role-based dashboards beyond owner/admin
+— are both explicitly OUT OF SCOPE for this version per the Owner's direct call (see "Closed Out
+This Session" below), not open work items anymore.
 
 After the checkpoint above was first written, a `/graphify` knowledge-graph build of the repo
 (665 nodes, 1146 edges, 40 communities — output in `graphify-out/`, untracked/local) caught a
@@ -102,17 +103,31 @@ hot-reload) is needed to pick this up if one was left running from a prior sessi
 
 ## Still Open
 
-- **README #6's real-data verification** and its two flagged unverified assumptions (Sales-
-  voucher-type filter specificity, `ACTUALQTY`/`BILLEDQTY` precedence) — Owner's own manual step
-  once he has a real Tally export to test against.
-- **Recommended before actual deployment:** a real `docker compose -f docker-compose.prod.yml
-  build frontend` + smoke-test, as final confirmation of the dual-React-copy fix in an actual
-  Docker build (not verifiable in this environment — no Docker available here).
-- Role-based dashboard views beyond owner/admin — not started, no brief written yet.
 - Production/AWS: still no production environment exists at all. Unchanged from prior sessions —
   see `project-stoneos-production-deploy-hold` memory.
-- `graphify-out/` (knowledge graph build) is untracked/local — not in `.gitignore` either way;
-  no decision made on whether to commit it, gitignore it, or leave as-is. Low priority.
+
+## Closed Out This Session (Owner decisions)
+
+- **Docker smoke test for Step 5D — DONE, real Docker (not simulated).** Docker turned out to be
+  available in this environment after all. Ran the actual `docker compose -f
+  docker-compose.prod.yml build frontend` — built clean. Inspected the resulting image directly:
+  exactly one `react`/`react-dom` copy at `19.2.7` (searched the full image filesystem, not just
+  `node_modules` — no stray copy anywhere), confirming the dual-React-copy fix holds in the real
+  production artifact, not just the isolated-install simulation from earlier. Also booted the
+  image standalone (`docker run`, mapped port 3099) and confirmed `/sign-in` returns a clean
+  `200` with no startup errors in the container logs. Step 5D is now fully closed — no more open
+  verification items on it.
+- **Role-based dashboards beyond owner/admin — Owner's explicit call: OUT OF SCOPE for this
+  version, no plan to build.** Not "not started yet" — deliberately not happening. README's
+  Dashboard row and any future references should reflect owner/admin as the complete scope for
+  dashboards in this version, not a partial/interim state.
+- **README #6 Tally real-data verification — Owner's explicit call: OUT OF SCOPE for now.** The
+  code (`TallyVoucherItem`, item-cross-check endpoint) stays as built; running it against a real
+  Tally export is deprioritized, not scheduled. Still the Owner's own manual step whenever it
+  does happen, per the standing backfill-execution-is-manual rule — just not being pursued
+  actively right now.
+- **`graphify-out/` — Owner's explicit call: commit it.** Kept in version control rather than
+  gitignored, so the knowledge graph travels with the repo for future sessions/contributors.
 
 ---
 

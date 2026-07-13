@@ -787,6 +787,23 @@ available here):** the Owner should run a real `docker compose -f docker-compose
 frontend` and smoke-test the resulting image once, as final confirmation that the isolated-build
 dependency resolution behaves as verified here.
 
+#### Step 5D Round 3 — Real Docker smoke test
+*Date: 2026-07-13*
+
+Docker turned out to be available in this environment after all (re-checked, daemon responsive).
+Ran the actual `docker compose -f docker-compose.prod.yml build frontend` (using the root
+`.env`'s existing Clerk keys, auto-loaded by Compose) — built clean, no errors. Independently
+inspected the resulting image directly rather than trusting the build succeeding as proof enough:
+`docker run --entrypoint sh` + a filesystem search across the whole image (not just
+`node_modules`) found exactly one `react` directory and one `react-dom` directory, both
+`19.2.7` — confirms the dual-React-copy fix holds in the real production artifact, not just the
+isolated-install simulation from Round 2. Also booted the image standalone (`docker run -d -p
+3099:3000`) and confirmed `/sign-in` returns a clean `200` with no errors in the container logs
+and `✓ Ready in 0ms` on Next.js 16.2.10 — the server starts correctly end to end.
+
+**Step 5D is fully closed — every open verification item resolved with a real Docker build, not
+a simulation.**
+
 **Step 5D is CLEARED — merged 2026-07-12 (last, per plan).**
 
 ---
