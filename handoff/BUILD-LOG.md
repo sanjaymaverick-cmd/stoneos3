@@ -5,11 +5,20 @@
 
 ## Current Status
 
-**Active step:** none — Steps 5A, 5B, 5C, and 5D all cleared and merged 2026-07-12 (built in
-parallel in isolated worktrees, one per step: `worktrees/recovery-ratio-report`,
-`worktrees/slab-dimension-overrides`, `worktrees/tally-item-detail`,
-`worktrees/nextjs-16-upgrade`). 5D merged last, per plan, after fixing a dual-React-copy
-dependency issue Richard's review surfaced.
+**Active step:** Step 6A — Copilot database safety foundation (RLS + read-only Postgres role).
+First of two steps building the AI Business Analyst / Copilot (README item #10). Direction
+conversation with the Owner settled: in-app chat Q&A, owner-only, free-form LLM-generated SQL
+(Owner's explicit choice over the safer tool-calling alternative I recommended), Google Gemini
+(not Anthropic, to avoid a new paid API key), mitigated by Postgres Row-Level Security as the
+real safety boundary rather than trusting generated SQL to self-scope. Step 6A builds and proves
+the RLS foundation in isolation (33 tenant-scoped tables, no NestJS/LLM/frontend code yet); Step
+6B (Gemini integration + chat UI) only starts once 6A is reviewed clean. See
+`handoff/ARCHITECT-BRIEF.md` for the full brief.
+
+**Previously:** Steps 5A, 5B, 5C, and 5D all cleared and merged 2026-07-12 (built in parallel in
+isolated worktrees, one per step). 5D merged last, per plan, after fixing a dual-React-copy
+dependency issue Richard's review surfaced; the fix was confirmed against a real Docker build on
+2026-07-13.
 **Last cleared:** Step 5D (Next.js 15.5.20 → 16.2.10) — reviewed clean (0 Must Fix), one
 significant Should Fix escalated (dual React copies in the production build artifact from a
 `lucide-react` peer-range conflict blocking React 19's hoisting) fixed directly by the Architect
