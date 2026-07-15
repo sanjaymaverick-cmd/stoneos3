@@ -72,11 +72,14 @@ cutting_day_log(id, cutting_session_id, operational_date, runtime_hours, power_c
   operator_id, notes, created_at)
   — Per operational-day (7am-to-7am) detail within a cutting_session.
 
-polishing_session(id, factory_id, machine_id, operational_date, finish_type,
+polishing_session(id, factory_id, machine_id, operational_date, stage, finish_type,
   slabs_polished_count, runtime_hours, power_consumption_kwh, downtime_minutes,
   downtime_reason, operator_id, notes, created_at, is_backfilled)
-  — finish_type is 'glossy' | 'leather'. One session = one day's polishing-line run on a batch
-  of slabs (join polishing_session_slab for which specific slabs).
+  — Same LPM machine runs two distinct process stages: stage is 'grinding' | 'polishing'
+  (grinding happens first, then epoxy is applied manually — untracked — then polishing).
+  finish_type is 'glossy' | 'leather' and only ever set when stage = 'polishing' (null for
+  grinding rows). One session = one day's run on a batch of slabs for one stage (join
+  polishing_session_slab for which specific slabs).
 
 polishing_session_slab(id, polishing_session_id, slab_id)
   — Join table: which slabs went through which polishing session.

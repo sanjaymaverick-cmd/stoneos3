@@ -7,13 +7,20 @@ import { apiFetch, safeGetToken } from "../../lib/api";
 import { AppNav } from "../../components/AppNav";
 import { Ticket } from "../../components/Ticket";
 
-// LPM POLISHING — records one automated batch run against specific slabs.
-// Per business rule (confirmed): once a slab clears cutting and enters
-// this batch, it is ALWAYS sellable afterward, even if a surface defect
-// is found during/after polishing — LPM's automated batch/liner assembly
-// can't selectively exclude mid-batch anyway, and internal stone defects
-// are often only visible once polished. This page has no rejection step
-// by design — see Slab.qualityNote in the schema for how a found defect
+// LPM RUNS — records one automated batch run against specific slabs. The
+// same LPM machine does two process stages: Grinding (first), then
+// Polishing (after epoxy is applied by hand — untracked, not a software
+// step). A slab only moves to salesStatus 'polished' once it actually goes
+// through the Polishing stage; a Grinding entry is record-keeping only and
+// doesn't advance the slab's inventory state. There's no enforced ordering
+// between the two — the same "in_stock" slab list is eligible for either.
+//
+// Per business rule (confirmed): once a slab clears cutting and enters a
+// batch, it is ALWAYS sellable afterward, even if a surface defect is found
+// during/after polishing — LPM's automated batch/liner assembly can't
+// selectively exclude mid-batch anyway, and internal stone defects are
+// often only visible once polished. This page has no rejection step by
+// design — see Slab.qualityNote in the schema for how a found defect
 // should be handled (pricing note, never inventory exclusion).
 
 export default function PolishingPage() {
@@ -34,6 +41,7 @@ export default function PolishingPage() {
 
   const [operationalDate, setOperationalDate] = useState(defaultOpDate());
   const [machineId, setMachineId] = useState("");
+  const [stage, setStage] = useState<"grinding" | "polishing">("polishing");
   const [finishType, setFinishType] = useState<"glossy" | "leather">("glossy");
   const [selectedSlabIds, setSelectedSlabIds] = useState<string[]>([]);
   const [runtimeHours, setRuntimeHours] = useState("");
@@ -89,7 +97,8 @@ export default function PolishingPage() {
         body: JSON.stringify({
           machineId,
           operationalDate,
-          finishType,
+          stage,
+          finishType: stage === "polishing" ? finishType : undefined,
           slabIds: selectedSlabIds,
           runtimeHours: runtimeHours ? parseFloat(runtimeHours) : undefined,
           powerConsumptionKwh: powerKwh ? parseFloat(powerKwh) : undefined,
@@ -128,7 +137,7 @@ export default function PolishingPage() {
         </div>
       </div>
 
-      <Ticket icon={Gauge} title="New Polishing Run" subtitle="One automated batch — all selected slabs get the same finish" accent="moss">
+      <Ticket icon={Gauge} title="New LPM Run" subtitle="Grinding and Polishing are separate runs on the same machine — epoxy is applied by hand in between and isn't tracked here" accent="moss">
         <div className="grid">
           <label className="field"><span className="field-label">Machine (LPM)</span>
             <select className="field-input" value={machineId} onChange={(e) => setMachineId(e.target.value)}>
@@ -136,12 +145,20 @@ export default function PolishingPage() {
               {lpmMachines.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
             </select>
           </label>
-          <label className="field"><span className="field-label">Finish</span>
-            <select className="field-input" value={finishType} onChange={(e) => setFinishType(e.target.value as any)}>
-              <option value="glossy">Glossy</option>
-              <option value="leather">Leather</option>
+          <label className="field"><span className="field-label">Stage</span>
+            <select className="field-input" value={stage} onChange={(e) => setStage(e.target.value as any)}>
+              <option value="grinding">Grinding</option>
+              <option value="polishing">Polishing</option>
             </select>
           </label>
+          {stage === "polishing" && (
+            <label className="field"><span className="field-label">Finish</span>
+              <select className="field-input" value={finishType} onChange={(e) => setFinishType(e.target.value as any)}>
+                <option value="glossy">Glossy</option>
+                <option value="leather">Leather</option>
+              </select>
+            </label>
+          )}
           <label className="field"><span className="field-label">Runtime (hrs)</span>
             <input className="field-input" value={runtimeHours} onChange={(e) => setRuntimeHours(e.target.value)} placeholder="0" />
           </label>
@@ -161,7 +178,7 @@ export default function PolishingPage() {
 
         <div style={{ marginTop: 16 }}>
           <div className="field-label" style={{ marginBottom: 8 }}>
-            Select Slabs Awaiting Polish ({selectedSlabIds.length} selected)
+            Select Slabs for {stage === "grinding" ? "Grinding" : "Polishing"} ({selectedSlabIds.length} selected)
           </div>
           {!loaded ? (
             <p className="loading-note">Loading…</p>
@@ -194,7 +211,7 @@ export default function PolishingPage() {
         <div style={{ marginTop: 14, display: "flex", justifyContent: "flex-end" }}>
           <button className={`primary-btn ${status === "saved" ? "saved" : ""}`} onClick={submit} disabled={status === "saving"}>
             {status === "saved" ? <Check size={15} /> : <Save size={15} />}
-            {status === "saving" ? "Saving…" : status === "saved" ? "Saved" : "Record Polishing Run"}
+            {status === "saving" ? "Saving…" : status === "saved" ? "Saved" : `Record ${stage === "grinding" ? "Grinding" : "Polishing"} Run`}
           </button>
         </div>
       </Ticket>
@@ -208,8 +225,13 @@ export default function PolishingPage() {
         {loaded && sessions.map((s) => (
           <div className="row-card" key={s.id}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span className={`badge ${s.finishType === "glossy" ? "invoiced" : "mixed"}`}>{s.finishType}</span>
-              <span style={{ fontSize: 12, color: "#6B6255" }}>{s.slabsPolishedCount} slabs · {s.runtimeHours ?? "?"} hrs</span>
+              <span style={{ display: "flex", gap: 6 }}>
+                <span className={`badge ${s.stage === "grinding" ? "mixed" : "invoiced"}`}>{s.stage}</span>
+                {s.stage === "polishing" && s.finishType && (
+                  <span className={`badge ${s.finishType === "glossy" ? "invoiced" : "mixed"}`}>{s.finishType}</span>
+                )}
+              </span>
+              <span style={{ fontSize: 12, color: "var(--muted)" }}>{s.slabsPolishedCount} slabs · {s.runtimeHours ?? "?"} hrs</span>
             </div>
             <div style={{ fontSize: 11.5, fontFamily: "monospace", color: "#555", marginTop: 6 }}>
               {(s.slabs ?? []).map((ss: any) => ss.slab?.slabSerial).join(", ")}

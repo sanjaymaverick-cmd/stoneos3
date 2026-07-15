@@ -201,7 +201,10 @@ model PolishingSession {
   machineId           String    @map("machine_id") // the LPM
   machine             Machine   @relation(fields: [machineId], references: [id])
   operationalDate     DateTime  @map("operational_date") @db.Date
-  finishType          String    @map("finish_type") // glossy / leather
+  stage               String    @default("polishing") // grinding / polishing — same LPM, two
+                                                        // process steps; epoxy application happens
+                                                        // in between but is a manual, untracked step
+  finishType          String?   @map("finish_type") // glossy / leather — polishing stage only
   slabsPolishedCount  Int?      @map("slabs_polished_count")
   runtimeHours        Decimal?  @map("runtime_hours") @db.Decimal(4, 2)
   powerConsumptionKwh Decimal?  @map("power_consumption_kwh") @db.Decimal(10, 2)

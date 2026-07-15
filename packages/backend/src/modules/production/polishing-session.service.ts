@@ -4,7 +4,8 @@ import { PrismaService } from "../../common/prisma.service";
 interface CreatePolishingSessionInput {
   machineId: string;
   operationalDate: string;
-  finishType: "glossy" | "leather";
+  stage: "grinding" | "polishing";
+  finishType?: "glossy" | "leather"; // required when stage is "polishing", ignored otherwise
   slabIds: string[];
   runtimeHours?: number;
   powerConsumptionKwh?: number;
@@ -31,6 +32,9 @@ export class PolishingSessionService {
     if (!input.slabIds?.length) {
       throw new BadRequestException("Polishing session needs at least one slab");
     }
+    if (input.stage === "polishing" && !input.finishType) {
+      throw new BadRequestException("Finish (glossy/leather) is required for a polishing-stage entry");
+    }
 
     const slabs = await this.prisma.slab.findMany({
       where: { id: { in: input.slabIds }, factoryId },
@@ -39,13 +43,16 @@ export class PolishingSessionService {
       throw new BadRequestException("One or more slabs not found in this factory");
     }
 
+    const isPolishingStage = input.stage === "polishing";
+
     return this.prisma.$transaction(async (tx) => {
       const session = await tx.polishingSession.create({
         data: {
           factoryId,
           machineId: input.machineId,
           operationalDate: new Date(input.operationalDate),
-          finishType: input.finishType,
+          stage: input.stage,
+          finishType: isPolishingStage ? input.finishType : undefined,
           slabsPolishedCount: input.slabIds.length,
           runtimeHours: input.runtimeHours,
           powerConsumptionKwh: input.powerConsumptionKwh,
@@ -60,13 +67,18 @@ export class PolishingSessionService {
         await tx.polishingSessionSlab.create({
           data: { polishingSessionId: session.id, slabId: slab.id },
         });
-        await tx.slabStateTransition.create({
-          data: { slabId: slab.id, fromState: slab.salesStatus, toState: "polished", machineId: input.machineId, userId },
-        });
-        await tx.slab.update({
-          where: { id: slab.id },
-          data: { salesStatus: "polished", finish: input.finishType },
-        });
+        // Grinding is record-keeping only — the slab's real inventory state
+        // (salesStatus) only advances to 'polished' once it actually goes
+        // through the polishing stage.
+        if (isPolishingStage) {
+          await tx.slabStateTransition.create({
+            data: { slabId: slab.id, fromState: slab.salesStatus, toState: "polished", machineId: input.machineId, userId },
+          });
+          await tx.slab.update({
+            where: { id: slab.id },
+            data: { salesStatus: "polished", finish: input.finishType },
+          });
+        }
       }
 
       return tx.polishingSession.findUniqueOrThrow({
