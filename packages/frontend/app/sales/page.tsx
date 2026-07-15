@@ -38,6 +38,8 @@ export default function SalesPage() {
   const [orders, setOrders] = useState<any[]>([]);
   const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState("");
+  const [addingCustomer, setAddingCustomer] = useState(false);
+  const [customerErrorMsg, setCustomerErrorMsg] = useState("");
 
   const loadCustomers = async () => {
     const token = await safeGetToken(getToken);
@@ -53,13 +55,21 @@ export default function SalesPage() {
   useEffect(() => { loadCustomers(); loadOrders(); }, []);
 
   const addCustomer = async () => {
-    if (!newCustomerName.trim()) return;
-    const token = await safeGetToken(getToken);
-    if (!token) return;
-    const created = await apiFetch("/customers", token, { method: "POST", body: JSON.stringify({ name: newCustomerName }) });
-    setNewCustomerName("");
-    await loadCustomers();
-    setCustomerId(created.id);
+    if (!newCustomerName.trim() || addingCustomer) return;
+    setAddingCustomer(true);
+    setCustomerErrorMsg("");
+    try {
+      const token = await safeGetToken(getToken);
+      if (!token) return;
+      const created = await apiFetch("/customers", token, { method: "POST", body: JSON.stringify({ name: newCustomerName }) });
+      setNewCustomerName("");
+      await loadCustomers();
+      setCustomerId(created.id);
+    } catch (e: any) {
+      setCustomerErrorMsg(e.message ?? "Failed to add customer");
+    } finally {
+      setAddingCustomer(false);
+    }
   };
 
   const updateLine = (id: string, field: keyof LineItem, value: string) =>
@@ -108,7 +118,7 @@ export default function SalesPage() {
     <div className="app-shell">
       <div className="stamp">
         <div>
-          <div className="stamp-title">SALES</div>
+          <h1 className="stamp-title">SALES</h1>
           <div className="stamp-sub">STONEOS · VEDAM GRANITES</div>
         </div>
         <AppNav />
@@ -119,7 +129,7 @@ export default function SalesPage() {
         <div className="ticket-header">
           <div className="ticket-icon moss"><ClipboardList size={16} /></div>
           <div>
-            <div className="ticket-title">New Sales Order</div>
+            <h2 className="ticket-title">New Sales Order</h2>
             <div className="ticket-subtitle">Structured line items — one row per variety/transaction</div>
           </div>
         </div>
@@ -130,7 +140,7 @@ export default function SalesPage() {
             <input className="field-input" type="date" value={orderDate} onChange={(e) => setOrderDate(e.target.value)} />
           </label>
           <label className="field">
-            <span className="field-label">Customer</span>
+            <span className="field-label">Customer<span className="required-mark">*</span></span>
             <select className="field-input" value={customerId} onChange={(e) => setCustomerId(e.target.value)}>
               <option value="">Select…</option>
               {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -139,16 +149,24 @@ export default function SalesPage() {
           <label className="field">
             <span className="field-label">Or Add New Customer</span>
             <div style={{ display: "flex", gap: 6 }}>
-              <input className="field-input" placeholder="Customer name" value={newCustomerName} onChange={(e) => setNewCustomerName(e.target.value)} />
-              <button className="add-btn" style={{ width: "auto", padding: "7px 12px" }} onClick={addCustomer}>Add</button>
+              <input className="field-input" placeholder="Customer name" value={newCustomerName} onChange={(e) => setNewCustomerName(e.target.value)} disabled={addingCustomer} />
+              <button className="add-btn" style={{ width: "auto", padding: "7px 12px" }} onClick={addCustomer} disabled={addingCustomer}>
+                {addingCustomer ? "Adding…" : "Add"}
+              </button>
             </div>
           </label>
         </div>
+        {customerErrorMsg && <div style={{ color: "var(--rust)", fontSize: 12.5, marginTop: -8, marginBottom: 14 }}>{customerErrorMsg}</div>}
+        {errorMsg && <div style={{ color: "var(--rust)", fontSize: 12.5, marginTop: -8, marginBottom: 14 }}>{errorMsg}</div>}
 
         {lines.map((l) => (
           <div className="row-card" key={l.id}>
             {lines.length > 1 && (
-              <button className="row-remove" onClick={() => setLines((s) => s.filter((r) => r.id !== l.id))}>
+              <button
+                className="row-remove"
+                aria-label="Remove line item"
+                onClick={() => setLines((s) => s.filter((r) => r.id !== l.id))}
+              >
                 <Trash2 size={14} />
               </button>
             )}
@@ -204,8 +222,6 @@ export default function SalesPage() {
           <span className="value">₹{fmt(orderTotal)}</span>
         </div>
 
-        {errorMsg && <div style={{ color: "var(--rust)", fontSize: 12.5, marginTop: 8 }}>{errorMsg}</div>}
-
         <div style={{ marginTop: 14, display: "flex", justifyContent: "flex-end" }}>
           <button className={`primary-btn ${status === "saved" ? "saved" : ""}`} onClick={submitOrder} disabled={status === "saving"}>
             {status === "saved" ? <Check size={15} /> : <Save size={15} />}
@@ -218,27 +234,29 @@ export default function SalesPage() {
         <div className="ticket-notch left" /><div className="ticket-notch right" />
         <div className="ticket-header">
           <div className="ticket-icon brass"><ClipboardList size={16} /></div>
-          <div><div className="ticket-title">Recent Orders</div></div>
+          <div><h2 className="ticket-title">Recent Orders</h2></div>
         </div>
-        <table className="list-table">
-          <thead><tr><th>Date</th><th>Customer</th><th>Lines</th><th>Payment</th><th>Total</th></tr></thead>
-          <tbody>
-            {orders.map((o) => {
-              const total = (o.lineItems ?? []).reduce((s: number, li: any) =>
-                s + Number(li.quantity) * Number(li.unitPrice) + Number(li.gstAmount ?? 0) + Number(li.loadingCharge ?? 0) + Number(li.transportCharge ?? 0), 0);
-              const paymentTypes = Array.from(new Set((o.lineItems ?? []).map((li: any) => li.paymentType)));
-              return (
-                <tr key={o.id}>
-                  <td>{new Date(o.orderDate).toLocaleDateString("en-IN")}</td>
-                  <td style={{ fontFamily: "Space Grotesk" }}>{o.customer?.name}</td>
-                  <td>{o.lineItems?.length ?? 0}</td>
-                  <td>{paymentTypes.map((t: any) => <span key={t} className={`badge ${t}`} style={{ marginRight: 4 }}>{t}</span>)}</td>
-                  <td>₹{fmt(total)}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+        <div className="table-scroll">
+          <table className="list-table">
+            <thead><tr><th>Date</th><th>Customer</th><th>Lines</th><th>Payment</th><th>Total</th></tr></thead>
+            <tbody>
+              {orders.map((o) => {
+                const total = (o.lineItems ?? []).reduce((s: number, li: any) =>
+                  s + Number(li.quantity) * Number(li.unitPrice) + Number(li.gstAmount ?? 0) + Number(li.loadingCharge ?? 0) + Number(li.transportCharge ?? 0), 0);
+                const paymentTypes = Array.from(new Set((o.lineItems ?? []).map((li: any) => li.paymentType)));
+                return (
+                  <tr key={o.id}>
+                    <td>{new Date(o.orderDate).toLocaleDateString("en-IN")}</td>
+                    <td style={{ fontFamily: "Space Grotesk" }}>{o.customer?.name}</td>
+                    <td>{o.lineItems?.length ?? 0}</td>
+                    <td>{paymentTypes.map((t: any) => <span key={t} className={`badge ${t}`} style={{ marginRight: 4 }}>{t}</span>)}</td>
+                    <td>₹{fmt(total)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );

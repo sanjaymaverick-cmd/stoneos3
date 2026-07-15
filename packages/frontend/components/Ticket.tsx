@@ -24,7 +24,7 @@ export function Ticket({ icon: Icon, title, subtitle, accent = "brass", action, 
           <Icon size={16} strokeWidth={2.25} />
         </div>
         <div style={{ flex: 1 }}>
-          <div className="ticket-title">{title}</div>
+          <h2 className="ticket-title">{title}</h2>
           {subtitle && <div className="ticket-subtitle">{subtitle}</div>}
         </div>
         {action}

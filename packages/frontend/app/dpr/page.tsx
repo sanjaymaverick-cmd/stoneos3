@@ -194,7 +194,7 @@ export default function ProductionPage() {
     <div className="app-shell">
       <div className="stamp">
         <div>
-          <div className="stamp-title">PRODUCTION — B-21</div>
+          <h1 className="stamp-title">PRODUCTION — B-21</h1>
           <div className="stamp-sub">STONEOS · VEDAM GRANITES · OPERATIONAL DAY = 7AM–7AM</div>
         </div>
         <AppNav />
@@ -312,11 +312,11 @@ export default function ProductionPage() {
                   <input className="field-input" value={completionForm[s.id]?.wastageNotes ?? ""} onChange={(e) => updateCompletion(s.id, "wastageNotes", e.target.value)} placeholder="Optional" />
                 </label>
               </div>
-              <p style={{ fontSize: 11.5, color: "#857c6c", marginTop: 4 }}>
+              <p style={{ fontSize: 11.5, color: "#6B6255", marginTop: 4 }}>
                 Dimensions here are a rough placeholder for yard tracking only — the real measurement happens once, at sale.
               </p>
               {completionForm[s.id]?.totalSlabsCut && completionForm[s.id]?.finalGoodSlabCount && (
-                <p style={{ fontSize: 12, color: "#857c6c", marginTop: 8 }}>
+                <p style={{ fontSize: 12, color: "#6B6255", marginTop: 8 }}>
                   {parseInt(completionForm[s.id].totalSlabsCut) - parseInt(completionForm[s.id].finalGoodSlabCount)} damaged/broken —
                   won't enter inventory. Serials will run {s.rawBlock?.serialNumber}/{completionForm[s.id].totalSlabsCut}/01 through
                   …/{String(completionForm[s.id].finalGoodSlabCount).padStart(2, "0")}.
@@ -402,7 +402,7 @@ export default function ProductionPage() {
       {sessions.length === 0 && (
         <div className="ticket">
           <div className="ticket-notch left" /><div className="ticket-notch right" />
-          <p style={{ margin: 0, color: "#857c6c", fontSize: 13.5 }}>
+          <p style={{ margin: 0, color: "#6B6255", fontSize: 13.5 }}>
             No blocks on B-21 right now. Allocate one above to start a cutting session.
           </p>
         </div>

@@ -37,12 +37,12 @@ function LoadingDashboard() {
     <div className="app-shell">
       <div className="stamp">
         <div>
-          <div className="stamp-title">DASHBOARD</div>
+          <h1 className="stamp-title">DASHBOARD</h1>
           <div className="stamp-sub">STONEOS · VEDAM GRANITES</div>
         </div>
         <AppNav />
       </div>
-      <div className="ticket"><div className="ticket-notch left" /><div className="ticket-notch right" /><p>Loading…</p></div>
+      <div className="ticket"><div className="ticket-notch left" /><div className="ticket-notch right" /><p className="loading-note">Loading…</p></div>
     </div>
   );
 }
@@ -52,7 +52,7 @@ function PlaceholderDashboard() {
     <div className="app-shell">
       <div className="stamp">
         <div>
-          <div className="stamp-title">DASHBOARD</div>
+          <h1 className="stamp-title">DASHBOARD</h1>
           <div className="stamp-sub">STONEOS · VEDAM GRANITES</div>
         </div>
         <AppNav />
@@ -147,14 +147,14 @@ function OwnerDashboard() {
     <div className="app-shell">
       <div className="stamp">
         <div>
-          <div className="stamp-title">DASHBOARD</div>
+          <h1 className="stamp-title">DASHBOARD</h1>
           <div className="stamp-sub">STONEOS · VEDAM GRANITES</div>
         </div>
         <AppNav />
       </div>
 
       {!loaded ? (
-        <div className="ticket"><div className="ticket-notch left" /><div className="ticket-notch right" /><p>Loading…</p></div>
+        <div className="ticket"><div className="ticket-notch left" /><div className="ticket-notch right" /><p className="loading-note">Loading…</p></div>
       ) : errorMsg ? (
         <div className="ticket">
           <div className="ticket-notch left" /><div className="ticket-notch right" />
@@ -238,10 +238,11 @@ function OwnerDashboard() {
           <Ticket icon={Activity} title="Recent Activity" subtitle="Latest 5 sales orders and expenses" accent="rust">
             <div className="recent-columns">
               <div>
-                <div className="recent-col-title">Sales Orders</div>
+                <h3 className="recent-col-title">Sales Orders</h3>
                 {recentOrders.length === 0 ? (
                   <p className="empty-note">No sales orders yet.</p>
                 ) : (
+                  <div className="table-scroll">
                   <table className="list-table">
                     <thead><tr><th>Date</th><th>Customer</th></tr></thead>
                     <tbody>
@@ -253,13 +254,15 @@ function OwnerDashboard() {
                       ))}
                     </tbody>
                   </table>
+                  </div>
                 )}
               </div>
               <div>
-                <div className="recent-col-title">Expenses</div>
+                <h3 className="recent-col-title">Expenses</h3>
                 {recentExpenses.length === 0 ? (
                   <p className="empty-note">No expenses yet.</p>
                 ) : (
+                  <div className="table-scroll">
                   <table className="list-table">
                     <thead><tr><th>Date</th><th>Category</th><th>Amount</th></tr></thead>
                     <tbody>
@@ -272,6 +275,7 @@ function OwnerDashboard() {
                       ))}
                     </tbody>
                   </table>
+                  </div>
                 )}
               </div>
             </div>

@@ -25,6 +25,8 @@ export default function ExpensesPage() {
   });
   const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState("");
+  const [addingVehicle, setAddingVehicle] = useState(false);
+  const [vehicleErrorMsg, setVehicleErrorMsg] = useState("");
 
   const loadAll = async () => {
     const token = await safeGetToken(getToken);
@@ -43,13 +45,21 @@ export default function ExpensesPage() {
   useEffect(() => { loadAll(); }, []);
 
   const addVehicle = async () => {
-    if (!newVehicleName.trim()) return;
-    const token = await safeGetToken(getToken);
-    if (!token) return;
-    const created = await apiFetch("/vehicles", token, { method: "POST", body: JSON.stringify({ name: newVehicleName }) });
-    setNewVehicleName("");
-    await loadAll();
-    setForm((f) => ({ ...f, vehicleId: created.id }));
+    if (!newVehicleName.trim() || addingVehicle) return;
+    setAddingVehicle(true);
+    setVehicleErrorMsg("");
+    try {
+      const token = await safeGetToken(getToken);
+      if (!token) return;
+      const created = await apiFetch("/vehicles", token, { method: "POST", body: JSON.stringify({ name: newVehicleName }) });
+      setNewVehicleName("");
+      await loadAll();
+      setForm((f) => ({ ...f, vehicleId: created.id }));
+    } catch (e: any) {
+      setVehicleErrorMsg(e.message ?? "Failed to add vehicle");
+    } finally {
+      setAddingVehicle(false);
+    }
   };
 
   const submit = async () => {
@@ -89,7 +99,7 @@ export default function ExpensesPage() {
     <div className="app-shell">
       <div className="stamp">
         <div>
-          <div className="stamp-title">EXPENSES</div>
+          <h1 className="stamp-title">EXPENSES</h1>
           <div className="stamp-sub">STONEOS · VEDAM GRANITES</div>
         </div>
         <AppNav />
@@ -100,7 +110,7 @@ export default function ExpensesPage() {
         <div className="ticket-header">
           <div className="ticket-icon rust"><Wallet size={16} /></div>
           <div>
-            <div className="ticket-title">Add Expense</div>
+            <h2 className="ticket-title">Add Expense</h2>
             <div className="ticket-subtitle">Category list matches your real cash-book, not generic ERP defaults</div>
           </div>
         </div>
@@ -127,7 +137,7 @@ export default function ExpensesPage() {
 
           {form.category === "vehicle" && (
             <label className="field">
-              <span className="field-label">Vehicle</span>
+              <span className="field-label">Vehicle<span className="required-mark">*</span></span>
               <select className="field-input" value={form.vehicleId} onChange={(e) => setForm((f) => ({ ...f, vehicleId: e.target.value }))}>
                 <option value="">Select…</option>
                 {vehicles.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
@@ -140,12 +150,15 @@ export default function ExpensesPage() {
           <div style={{ marginTop: 10, display: "flex", gap: 6, alignItems: "flex-end" }}>
             <label className="field" style={{ flex: 1 }}>
               <span className="field-label">Or Add New Vehicle</span>
-              <input className="field-input" placeholder="e.g. Isuzu" value={newVehicleName} onChange={(e) => setNewVehicleName(e.target.value)} />
+              <input className="field-input" placeholder="e.g. Isuzu" value={newVehicleName} onChange={(e) => setNewVehicleName(e.target.value)} disabled={addingVehicle} />
             </label>
-            <button className="add-btn" style={{ width: "auto", padding: "7px 12px" }} onClick={addVehicle}>Add</button>
+            <button className="add-btn" style={{ width: "auto", padding: "7px 12px" }} onClick={addVehicle} disabled={addingVehicle}>
+              {addingVehicle ? "Adding…" : "Add"}
+            </button>
           </div>
         )}
 
+        {vehicleErrorMsg && <div style={{ color: "var(--rust)", fontSize: 12.5, marginTop: 10 }}>{vehicleErrorMsg}</div>}
         {errorMsg && <div style={{ color: "var(--rust)", fontSize: 12.5, marginTop: 10 }}>{errorMsg}</div>}
 
         <div style={{ marginTop: 14, display: "flex", justifyContent: "flex-end" }}>
@@ -160,23 +173,25 @@ export default function ExpensesPage() {
         <div className="ticket-notch left" /><div className="ticket-notch right" />
         <div className="ticket-header">
           <div className="ticket-icon brass"><Wallet size={16} /></div>
-          <div><div className="ticket-title">Recent Expenses</div></div>
+          <div><h2 className="ticket-title">Recent Expenses</h2></div>
         </div>
-        <table className="list-table">
-          <thead><tr><th>Date</th><th>Category</th><th>To Whom</th><th>Amount</th></tr></thead>
-          <tbody>
-            {expenses.map((e) => (
-              <tr key={e.id}>
-                <td>{new Date(e.expenseDate).toLocaleDateString("en-IN")}</td>
-                <td style={{ fontFamily: "Space Grotesk" }}>
-                  {e.category.replaceAll("_", " ")}{e.vehicle ? ` (${e.vehicle.name})` : ""}
-                </td>
-                <td style={{ fontFamily: "Space Grotesk" }}>{e.toWhom ?? "—"}</td>
-                <td>₹{fmt(Number(e.amount))}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <div className="table-scroll">
+          <table className="list-table">
+            <thead><tr><th>Date</th><th>Category</th><th>To Whom</th><th>Amount</th></tr></thead>
+            <tbody>
+              {expenses.map((e) => (
+                <tr key={e.id}>
+                  <td>{new Date(e.expenseDate).toLocaleDateString("en-IN")}</td>
+                  <td style={{ fontFamily: "Space Grotesk" }}>
+                    {e.category.replaceAll("_", " ")}{e.vehicle ? ` (${e.vehicle.name})` : ""}
+                  </td>
+                  <td style={{ fontFamily: "Space Grotesk" }}>{e.toWhom ?? "—"}</td>
+                  <td>₹{fmt(Number(e.amount))}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
         <div className="totals-strip">
           <span className="label">Total Shown</span>
           <span className="value">₹{fmt(total)}</span>

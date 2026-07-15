@@ -20,7 +20,7 @@ export default function CopilotPage() {
   const { isLoaded } = useUser();
   const role = useRole();
 
-  if (!isLoaded) return <Shell><p>Loading…</p></Shell>;
+  if (!isLoaded) return <Shell><p className="loading-note">Loading…</p></Shell>;
 
   // Owner only — narrower than the dashboard's "owner or admin" gate. This
   // was the Owner's own explicit choice for this feature, not an oversight.
@@ -40,7 +40,7 @@ function Shell({ children }: { children: React.ReactNode }) {
     <div className="app-shell">
       <div className="stamp">
         <div>
-          <div className="stamp-title">AI COPILOT</div>
+          <h1 className="stamp-title">AI COPILOT</h1>
           <div className="stamp-sub">STONEOS · VEDAM GRANITES</div>
         </div>
         <AppNav />
@@ -58,11 +58,13 @@ function CopilotChat() {
   const [question, setQuestion] = useState("");
   const [entries, setEntries] = useState<ChatEntry[]>([]);
   const [asking, setAsking] = useState(false);
+  const [pendingQuestion, setPendingQuestion] = useState("");
 
   const ask = async () => {
     const q = question.trim();
     if (!q || asking) return;
     setAsking(true);
+    setPendingQuestion(q);
     setQuestion("");
     try {
       const token = await safeGetToken(getToken);
@@ -79,6 +81,7 @@ function CopilotChat() {
       ]);
     } finally {
       setAsking(false);
+      setPendingQuestion("");
     }
   };
 
@@ -90,7 +93,7 @@ function CopilotChat() {
     <div className="app-shell">
       <div className="stamp">
         <div>
-          <div className="stamp-title">AI COPILOT</div>
+          <h1 className="stamp-title">AI COPILOT</h1>
           <div className="stamp-sub">STONEOS · VEDAM GRANITES</div>
         </div>
         <AppNav />
@@ -102,7 +105,7 @@ function CopilotChat() {
         subtitle="Free-form questions about production, sales, expenses, and inventory — answered from your factory's own data only"
         accent="brass"
       >
-        {entries.length === 0 ? (
+        {entries.length === 0 && !asking ? (
           <p className="empty-note">
             Try something like "how much did we spend on diesel last month?" or "what's our current raw block stock by variety?"
           </p>
@@ -125,7 +128,7 @@ function CopilotChat() {
                         alignItems: "center",
                         gap: 4,
                         fontSize: 11.5,
-                        color: "#857c6c",
+                        color: "#6B6255",
                         fontFamily: "Space Grotesk",
                       }}
                     >
@@ -154,6 +157,12 @@ function CopilotChat() {
                 )}
               </div>
             ))}
+            {asking && (
+              <div style={{ borderBottom: "1px dashed var(--stone-400)", paddingBottom: 14 }}>
+                <div style={{ fontWeight: 700, fontSize: 13.5, marginBottom: 6 }}>{pendingQuestion}</div>
+                <p className="loading-note">Thinking… this can take a few seconds.</p>
+              </div>
+            )}
           </div>
         )}
 

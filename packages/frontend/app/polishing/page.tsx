@@ -23,6 +23,8 @@ export default function PolishingPage() {
   const [sessions, setSessions] = useState<any[]>([]);
   const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState("");
+  const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState("");
 
   const defaultOpDate = () => {
     const d = new Date();
@@ -43,16 +45,23 @@ export default function PolishingPage() {
   const loadAll = async () => {
     const token = await safeGetToken(getToken);
     if (!token) return;
-    const [slabList, machineList, sessionList] = await Promise.all([
-      apiFetch("/slabs", token),
-      apiFetch("/machines", token),
-      apiFetch(`/polishing-sessions?date=${operationalDate}`, token),
-    ]);
-    setSlabs(slabList);
-    setMachines(machineList);
-    setSessions(sessionList);
-    const lpm = machineList.find((m: any) => m.machineType === "polishing");
-    if (lpm && !machineId) setMachineId(lpm.id);
+    try {
+      const [slabList, machineList, sessionList] = await Promise.all([
+        apiFetch("/slabs", token),
+        apiFetch("/machines", token),
+        apiFetch(`/polishing-sessions?date=${operationalDate}`, token),
+      ]);
+      setSlabs(slabList);
+      setMachines(machineList);
+      setSessions(sessionList);
+      const lpm = machineList.find((m: any) => m.machineType === "polishing");
+      if (lpm && !machineId) setMachineId(lpm.id);
+      setLoadError("");
+    } catch (e: any) {
+      setLoadError(e.message ?? "Failed to load polishing data");
+    } finally {
+      setLoaded(true);
+    }
   };
 
   useEffect(() => { loadAll(); }, [operationalDate]);
@@ -101,14 +110,19 @@ export default function PolishingPage() {
     <div className="app-shell">
       <div className="stamp">
         <div>
-          <div className="stamp-title">POLISHING — LPM</div>
+          <h1 className="stamp-title">POLISHING — LPM</h1>
           <div className="stamp-sub">
             STONEOS · VEDAM GRANITES{selectedMachine?.headCount ? ` · ${selectedMachine.headCount} heads × ${selectedMachine.abrasivesPerHead ?? 6} abrasives` : ""}
           </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <div className="date-box">
-            <input type="date" value={operationalDate} onChange={(e) => setOperationalDate(e.target.value)} />
+            <input
+              type="date"
+              aria-label="Operational date"
+              value={operationalDate}
+              onChange={(e) => setOperationalDate(e.target.value)}
+            />
           </div>
           <AppNav />
         </div>
@@ -149,8 +163,12 @@ export default function PolishingPage() {
           <div className="field-label" style={{ marginBottom: 8 }}>
             Select Slabs Awaiting Polish ({selectedSlabIds.length} selected)
           </div>
-          {eligibleSlabs.length === 0 ? (
-            <p style={{ color: "#857c6c", fontSize: 13 }}>No slabs currently in_stock. Complete a cutting session first.</p>
+          {!loaded ? (
+            <p className="loading-note">Loading…</p>
+          ) : loadError ? (
+            <p style={{ color: "var(--rust)", fontSize: 13 }}>Couldn't load slabs: {loadError}</p>
+          ) : eligibleSlabs.length === 0 ? (
+            <p className="empty-note">No slabs currently in_stock. Complete a cutting session first.</p>
           ) : (
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 6, maxHeight: 260, overflowY: "auto" }}>
               {eligibleSlabs.map((s) => (
@@ -158,7 +176,7 @@ export default function PolishingPage() {
                   key={s.id}
                   className="row-card"
                   style={{
-                    margin: 0, padding: "8px 10px", cursor: "pointer", display: "flex", alignItems: "center", gap: 8,
+                    margin: 0, padding: "12px 10px", minHeight: 44, cursor: "pointer", display: "flex", alignItems: "center", gap: 8,
                     borderColor: selectedSlabIds.includes(s.id) ? "var(--brass)" : "var(--stone-300)",
                     background: selectedSlabIds.includes(s.id) ? "#F3ECE2" : "white",
                   }}
@@ -182,12 +200,16 @@ export default function PolishingPage() {
       </Ticket>
 
       <Ticket icon={Gauge} title={`Runs on ${operationalDate}`}>
-        {sessions.length === 0 && <p style={{ color: "#857c6c", fontSize: 13 }}>No polishing runs recorded for this date yet.</p>}
-        {sessions.map((s) => (
+        {!loaded ? (
+          <p className="loading-note">Loading…</p>
+        ) : sessions.length === 0 ? (
+          <p className="empty-note">No polishing runs recorded for this date yet.</p>
+        ) : null}
+        {loaded && sessions.map((s) => (
           <div className="row-card" key={s.id}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <span className={`badge ${s.finishType === "glossy" ? "invoiced" : "mixed"}`}>{s.finishType}</span>
-              <span style={{ fontSize: 12, color: "#857c6c" }}>{s.slabsPolishedCount} slabs · {s.runtimeHours ?? "?"} hrs</span>
+              <span style={{ fontSize: 12, color: "#6B6255" }}>{s.slabsPolishedCount} slabs · {s.runtimeHours ?? "?"} hrs</span>
             </div>
             <div style={{ fontSize: 11.5, fontFamily: "monospace", color: "#555", marginTop: 6 }}>
               {(s.slabs ?? []).map((ss: any) => ss.slab?.slabSerial).join(", ")}

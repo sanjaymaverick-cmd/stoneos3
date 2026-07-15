@@ -22,6 +22,7 @@ export default function AdminUsersPage() {
   const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState("");
   const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState("");
 
   const loadUsers = async () => {
     const token = await safeGetToken(getToken);
@@ -29,9 +30,13 @@ export default function AdminUsersPage() {
     try {
       const list = await apiFetch("/admin/users", token);
       setUsers(list);
+      setLoadError("");
     } catch (e: any) {
       // A non-admin hitting this is expected (403) — the page already
-      // hides the UI for them, this just avoids a console-scary failure.
+      // hides the UI for them via `canAdminister`, so don't surface that
+      // one as an error. Anything else (500, network drop) IS a real
+      // failure and should say so, not look identical to "no teammates".
+      if (!e.message?.includes("403")) setLoadError(e.message ?? "Failed to load team list");
     }
     setLoaded(true);
   };
@@ -46,7 +51,7 @@ export default function AdminUsersPage() {
     }
     setStatus("saving"); setErrorMsg("");
     try {
-      const token = await getToken();
+      const token = await safeGetToken(getToken);
       if (!token) throw new Error("not authenticated");
       await apiFetch("/admin/users", token, {
         method: "POST",
@@ -70,10 +75,10 @@ export default function AdminUsersPage() {
     return (
       <div className="app-shell">
         <div className="stamp">
-          <div><div className="stamp-title">TEAM ACCESS</div></div>
+          <div><h1 className="stamp-title">TEAM ACCESS</h1></div>
           <AppNav />
         </div>
-        <div className="ticket"><div className="ticket-notch left" /><div className="ticket-notch right" /><p>Loading…</p></div>
+        <div className="ticket"><div className="ticket-notch left" /><div className="ticket-notch right" /><p className="loading-note">Loading…</p></div>
       </div>
     );
   }
@@ -82,7 +87,7 @@ export default function AdminUsersPage() {
     return (
       <div className="app-shell">
         <div className="stamp">
-          <div><div className="stamp-title">TEAM ACCESS</div></div>
+          <div><h1 className="stamp-title">TEAM ACCESS</h1></div>
           <AppNav />
         </div>
         <div className="ticket">
@@ -97,7 +102,7 @@ export default function AdminUsersPage() {
     <div className="app-shell">
       <div className="stamp">
         <div>
-          <div className="stamp-title">TEAM ACCESS</div>
+          <h1 className="stamp-title">TEAM ACCESS</h1>
           <div className="stamp-sub">STONEOS · VEDAM GRANITES</div>
         </div>
         <AppNav />
@@ -126,22 +131,26 @@ export default function AdminUsersPage() {
       </Ticket>
 
       <Ticket icon={Users} title={`Team (${users.length})`}>
-        {users.length === 0 ? (
-          <p style={{ color: "#857c6c", fontSize: 13 }}>No teammates provisioned yet.</p>
+        {loadError ? (
+          <p style={{ color: "var(--rust)", fontSize: 13 }}>Couldn't load the team list: {loadError}</p>
+        ) : users.length === 0 ? (
+          <p className="empty-note">No teammates provisioned yet.</p>
         ) : (
-          <table className="list-table">
-            <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th></tr></thead>
-            <tbody>
-              {users.map((u) => (
-                <tr key={u.id}>
-                  <td style={{ fontFamily: "Space Grotesk" }}>{u.name}</td>
-                  <td style={{ fontFamily: "Space Grotesk" }}>{u.email}</td>
-                  <td><span className="badge invoiced">{u.role}</span></td>
-                  <td>{u.active ? "Active" : "Inactive"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="table-scroll">
+            <table className="list-table">
+              <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th></tr></thead>
+              <tbody>
+                {users.map((u) => (
+                  <tr key={u.id}>
+                    <td style={{ fontFamily: "Space Grotesk" }}>{u.name}</td>
+                    <td style={{ fontFamily: "Space Grotesk" }}>{u.email}</td>
+                    <td><span className="badge invoiced">{u.role}</span></td>
+                    <td>{u.active ? "Active" : "Inactive"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </Ticket>
     </div>

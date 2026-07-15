@@ -23,11 +23,14 @@ export function AppNav() {
 
   return (
     <div className="nav-links">
-      {links.map((l) => (
-        <Link key={l.href} href={l.href} className={pathname === l.href ? "active" : ""}>
-          {l.label}
-        </Link>
-      ))}
+      {links.map((l) => {
+        const isActive = pathname === l.href || pathname.startsWith(`${l.href}/`);
+        return (
+          <Link key={l.href} href={l.href} className={isActive ? "active" : ""}>
+            {l.label}
+          </Link>
+        );
+      })}
       <UserButton />
     </div>
   );
