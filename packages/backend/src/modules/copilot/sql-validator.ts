@@ -36,6 +36,19 @@ const FORBIDDEN_KEYWORDS = [
   "SET",
 ];
 
+// Function calls that mutate session/transaction state the same way a bare
+// SET statement would — the \bSET\b keyword check above does NOT catch
+// these, because "_" is a word character in regex, so there is no word
+// boundary between "set" and "_config" and \bSET\b never matches inside
+// "set_config(". set_config() is exactly the mechanism executeScoped() uses
+// to apply factory scoping (see copilot.service.ts), so generated SQL that
+// calls it directly (e.g. from inside a CTE evaluated before the outer
+// query's table scan) could overwrite app.current_factory_id mid-
+// transaction and read another factory's rows before COMMIT/ROLLBACK
+// resets it. Matched separately from FORBIDDEN_KEYWORDS since it's a
+// function-call shape, not a bare keyword, and optionally schema-qualified.
+const FORBIDDEN_FUNCTION_CALLS: RegExp[] = [/(?:\bpg_catalog\s*\.\s*)?\bset_config\s*\(/i];
+
 const DEFAULT_ROW_LIMIT = 500;
 
 // Strips leading whitespace and leading `--` line comments / `/* */` block
@@ -99,6 +112,12 @@ export function validateGeneratedSql(rawSql: string, defaultLimit: number = DEFA
     const re = new RegExp(`\\b${keyword}\\b`, "i");
     if (re.test(body)) {
       return { valid: false, reason: `Contains forbidden keyword: ${keyword}` };
+    }
+  }
+
+  for (const pattern of FORBIDDEN_FUNCTION_CALLS) {
+    if (pattern.test(body)) {
+      return { valid: false, reason: "Contains forbidden function call: set_config" };
     }
   }
 

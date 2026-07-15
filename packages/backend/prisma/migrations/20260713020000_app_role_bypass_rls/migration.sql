@@ -1,0 +1,30 @@
+-- Step 6A follow-up: decouple the main app's RLS exemption from an
+-- accidental side effect of the "stoneos" role's superuser status.
+--
+-- Context: Step 6A enabled FORCE ROW LEVEL SECURITY on all 35 tenant-scoped
+-- tables. The main app (NestJS/Prisma, via DATABASE_URL) connects as the
+-- "stoneos" role, which docker-compose.yml / docker-compose.prod.yml create
+-- via POSTGRES_USER — the official postgres image's bootstrap-superuser
+-- mechanism. Superusers bypass RLS (and FORCE ROW LEVEL SECURITY)
+-- unconditionally, which is currently the ONLY reason the main app's
+-- existing queries keep working after Step 6A: they never set
+-- app.current_factory_id, because the app enforces tenant isolation in
+-- application code (filtering by factoryId directly), not via RLS.
+--
+-- That is an accident of role setup, not a decision. If "stoneos" is ever
+-- changed to a non-superuser role (a normal production-hardening step, and
+-- there is no production environment yet), every Prisma query across all 35
+-- RLS-protected tables would start evaluating the tenant_isolation policy
+-- against an unset session variable and return zero rows everywhere — a
+-- total, silent, app-wide outage with no code change to point to.
+--
+-- Fix: grant BYPASSRLS to "stoneos" explicitly, so the exemption is a named,
+-- intentional role attribute instead of a side effect of SUPERUSER. Revoking
+-- SUPERUSER from "stoneos" later no longer breaks the app by surprise —
+-- BYPASSRLS would have to be revoked too, which is a deliberate, reviewable
+-- action tied directly to this comment, not an incidental one.
+--
+-- Does not touch stoneos_copilot_ro: it was already created without
+-- BYPASSRLS and stays fully RLS-enforced, which is the actual security
+-- boundary for the Copilot's free-form LLM-generated SQL.
+ALTER ROLE stoneos BYPASSRLS;
