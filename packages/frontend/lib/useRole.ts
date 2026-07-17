@@ -1,6 +1,7 @@
 "use client";
 
 import { useUser } from "@clerk/nextjs";
+import { DEMO_MODE } from "./demo";
 
 // Every page used to re-read user?.publicMetadata?.role inline (see AppNav.tsx).
 // Centralized here now that a second call site (dashboard) needs it too.
@@ -8,6 +9,9 @@ import { useUser } from "@clerk/nextjs";
 // the same as "no elevated role" rather than flashing an owner-only view.
 export function useRole(): string | undefined {
   const { isLoaded, user } = useUser();
+  // Demo environment: everyone is the read-only owner, so every page
+  // (including the owner-only Dashboard and Copilot) is visible.
+  if (DEMO_MODE) return "owner";
   if (!isLoaded) return undefined;
   return user?.publicMetadata?.role as string | undefined;
 }

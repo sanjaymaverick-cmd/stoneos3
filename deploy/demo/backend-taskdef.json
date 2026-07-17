@@ -1,0 +1,35 @@
+{
+  "family": "stoneos-demo-backend",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "512",
+  "memory": "1024",
+  "executionRoleArn": "arn:aws:iam::REDACTED-AWS-ACCOUNT-ID:role/ecsTaskExecutionRole",
+  "containerDefinitions": [
+    {
+      "name": "stoneos-demo-backend",
+      "image": "REDACTED-AWS-ACCOUNT-ID.dkr.ecr.ap-south-1.amazonaws.com/stoneos-demo-backend:latest",
+      "portMappings": [{ "containerPort": 4000, "protocol": "tcp" }],
+      "environment": [
+        { "name": "PORT", "value": "4000" },
+        { "name": "DEMO_MODE", "value": "true" },
+        { "name": "DEMO_FACTORY_ID", "value": "d3305e05-0000-4000-8000-000000000001" },
+        { "name": "FRONTEND_URL", "value": "http://REPLACE-WITH-DEMO-ALB-DNS" }
+      ],
+      "secrets": [
+        {
+          "name": "DATABASE_URL",
+          "valueFrom": "arn:aws:ssm:ap-south-1:REDACTED-AWS-ACCOUNT-ID:parameter/stoneos-demo/database-url"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/stoneos-demo-backend",
+          "awslogs-region": "ap-south-1",
+          "awslogs-stream-prefix": "ecs"
+        }
+      }
+    }
+  ]
+}

@@ -1,6 +1,7 @@
-import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from "@nestjs/common";
+import { CanActivate, ExecutionContext, ForbiddenException, Injectable, UnauthorizedException } from "@nestjs/common";
 import { verifyToken } from "@clerk/backend";
 import { clerkClient } from "../clerk-client";
+import { DEMO_MODE, DEMO_USER, DEMO_ALLOWED_NON_GET } from "../demo";
 
 // Verifies the Clerk session token on every request and attaches the
 // decoded user (id, role, factoryId) to req.user. Role and factoryId are
@@ -10,6 +11,20 @@ import { clerkClient } from "../clerk-client";
 export class ClerkAuthGuard implements CanActivate {
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const req = context.switchToHttp().getRequest();
+
+    // Demo mode: skip Clerk entirely and act as a fixed read-only owner on
+    // the seeded demo factory. Only GETs (plus the read-only Copilot ask)
+    // are allowed so a partner exploring can't mutate the sample data.
+    if (DEMO_MODE) {
+      const method = (req.method ?? "GET").toUpperCase();
+      const path = (req.path ?? req.url ?? "").split("?")[0];
+      if (method !== "GET" && !DEMO_ALLOWED_NON_GET.some((p) => path.endsWith(p))) {
+        throw new ForbiddenException("This is a read-only demo — changes are disabled.");
+      }
+      req.user = { ...DEMO_USER };
+      return true;
+    }
+
     const authHeader = req.headers["authorization"];
     if (!authHeader?.startsWith("Bearer ")) {
       throw new UnauthorizedException("Missing session token");

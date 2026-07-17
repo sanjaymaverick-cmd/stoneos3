@@ -2,6 +2,27 @@
 
 High-level record of significant changes. Commit history has the detail.
 
+## 2026-07-17 — Partner demo environment (isolated, no sign-in)
+
+Prep for a partner-facing demo of the latest (pre-ship) build, running as a
+**separate** deployment that can't touch prod.
+
+- **Demo mode.** `DEMO_MODE=true` (backend) makes `ClerkAuthGuard` skip Clerk
+  and act as a fixed **read-only owner** on one seeded factory — only GETs and
+  the Copilot ask endpoint pass; other mutations return `403`. Frontend
+  `NEXT_PUBLIC_DEMO_MODE=true` drops the sign-in wall (`lib/demo.ts`,
+  `AuthGate`, `useRole`, `api`, `AppNav`).
+- **Copilot without Gemini.** In demo mode with no Gemini key, the Copilot
+  serves canned answers over the seeded data
+  (`copilot-demo-answers.ts`); a real key still runs the live text-to-SQL path.
+- **Seed.** `prisma/seed-demo.ts` — idempotent Vedam Granites sample data
+  (blocks, cutting/polishing, sales, expenses, 30-day summaries, recovery
+  traces) scoped to the demo factory only.
+- **Deploy.** Isolated `deploy/demo/` (task defs, expanded deploy policy),
+  `.github/workflows/deploy-demo.yml.disabled`, `.env.demo.example`, and a
+  runbook (`deploy/demo/README.md`). Frontend Dockerfile threads a
+  `NEXT_PUBLIC_DEMO_MODE` build arg.
+
 ## 2026-07-09 — Clerk Core 3 upgrade + first AWS deployment
 
 Took the project from "builds locally" to "live on AWS with CI/CD".

@@ -4,6 +4,8 @@ import { Pool } from "pg";
 import { PrismaService } from "../../common/prisma.service";
 import { validateGeneratedSql } from "./sql-validator";
 import { COPILOT_SCHEMA_CONTEXT } from "./copilot-schema-context";
+import { DEMO_MODE } from "../../common/demo";
+import { demoCopilotAnswer } from "./copilot-demo-answers";
 
 export interface CopilotAnswer {
   answer: string;
@@ -50,6 +52,24 @@ export class CopilotService {
   // the caller so a failed startup check surfaces as a friendly response
   // and a logged attempt, never a silent request that skips scoping.
   async ask(factoryId: string, userId: string, question: string, moduleReady: boolean): Promise<CopilotAnswer> {
+    // Demo environment without a Gemini key: serve canned answers over the
+    // seeded demo data instead of failing at generateSql(). If a real key is
+    // configured (this.genAI is set), fall through to the live path even in
+    // demo mode. The attempt is still logged for audit parity.
+    if (DEMO_MODE && !this.genAI) {
+      const { answer, sql } = demoCopilotAnswer(question);
+      await this.logAttempt({
+        factoryId,
+        userId,
+        question,
+        generatedSql: sql,
+        rowCount: null,
+        answer,
+        errorMessage: "demo-mode canned answer (no Gemini key configured)",
+      });
+      return { answer, sql };
+    }
+
     if (!moduleReady) {
       await this.logAttempt({
         factoryId,

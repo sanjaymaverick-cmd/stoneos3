@@ -1,0 +1,50 @@
+{
+  "Version": "2012-10-17",
+  "Comment": "Permissions for the demo deploy pipeline. Attach to the stoneos-github-deploy role (or a dedicated stoneos-demo-github-deploy role) IN ADDITION to the existing prod policy. Scoped to demo-named resources only, so it can never touch the live prod services.",
+  "Statement": [
+    {
+      "Sid": "EcrAuth",
+      "Effect": "Allow",
+      "Action": "ecr:GetAuthorizationToken",
+      "Resource": "*"
+    },
+    {
+      "Sid": "EcrPushDemo",
+      "Effect": "Allow",
+      "Action": [
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:BatchGetImage",
+        "ecr:GetDownloadUrlForLayer",
+        "ecr:InitiateLayerUpload",
+        "ecr:UploadLayerPart",
+        "ecr:CompleteLayerUpload",
+        "ecr:PutImage"
+      ],
+      "Resource": [
+        "arn:aws:ecr:ap-south-1:REDACTED-AWS-ACCOUNT-ID:repository/stoneos-demo-backend",
+        "arn:aws:ecr:ap-south-1:REDACTED-AWS-ACCOUNT-ID:repository/stoneos-demo-frontend"
+      ]
+    },
+    {
+      "Sid": "EcsRegisterAndDeployDemo",
+      "Effect": "Allow",
+      "Action": [
+        "ecs:RegisterTaskDefinition",
+        "ecs:DescribeServices",
+        "ecs:UpdateService"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "ArnLikeIfExists": {
+          "ecs:cluster": "arn:aws:ecs:ap-south-1:REDACTED-AWS-ACCOUNT-ID:cluster/stoneos-demo-cluster"
+        }
+      }
+    },
+    {
+      "Sid": "PassExecRole",
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": "arn:aws:iam::REDACTED-AWS-ACCOUNT-ID:role/ecsTaskExecutionRole"
+    }
+  ]
+}

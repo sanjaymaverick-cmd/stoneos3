@@ -61,6 +61,11 @@ body {
 /* --brass-dark, not --brass: white text on --brass measures ~4.1:1,
    below the 4.5:1 WCAG AA minimum. --brass-dark clears it (~5.9:1). */
 .nav-links a.active { background: var(--brass-dark); color: white; border-color: var(--brass-dark); }
+.nav-demo-badge {
+  font-family: 'IBM Plex Mono', monospace; font-size: 10px; font-weight: 600;
+  letter-spacing: 1px; color: var(--stone-100); background: var(--brass-dark);
+  border: 1px solid var(--brass-dark); border-radius: 3px; padding: 4px 7px; align-self: center;
+}
 
 .ticket {
   position: relative;

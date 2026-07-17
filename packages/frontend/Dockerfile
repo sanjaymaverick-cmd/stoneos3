@@ -14,8 +14,12 @@ COPY . .
 # it's actually being built for.
 ARG NEXT_PUBLIC_API_URL
 ARG NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+# NEXT_PUBLIC_DEMO_MODE=true builds the no-sign-in demo image (see lib/demo.ts).
+# Leave unset/false for the real production build.
+ARG NEXT_PUBLIC_DEMO_MODE
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+ENV NEXT_PUBLIC_DEMO_MODE=$NEXT_PUBLIC_DEMO_MODE
 RUN npm run build
 
 # ---- Production stage ----

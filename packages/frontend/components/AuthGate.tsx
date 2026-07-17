@@ -3,10 +3,18 @@
 import { useEffect } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
+import { DEMO_MODE } from "../lib/demo";
 
 const PUBLIC_PATHS = ["/sign-in", "/sign-up"];
 
 export function AuthGate({ children }: { children: React.ReactNode }) {
+  // Demo environment: no sign-in wall — render the app straight through.
+  if (DEMO_MODE) return <>{children}</>;
+
+  return <ClerkAuthGate>{children}</ClerkAuthGate>;
+}
+
+function ClerkAuthGate({ children }: { children: React.ReactNode }) {
   const { isLoaded, isSignedIn } = useAuth();
   const pathname = usePathname();
   const router = useRouter();

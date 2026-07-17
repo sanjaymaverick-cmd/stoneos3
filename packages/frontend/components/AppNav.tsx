@@ -1,7 +1,9 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useUser, UserButton } from "@clerk/nextjs";
+import { UserButton } from "@clerk/nextjs";
+import { useRole } from "../lib/useRole";
+import { DEMO_MODE } from "../lib/demo";
 
 const LINKS = [
   { href: "/dashboard", label: "Dashboard" },
@@ -14,8 +16,9 @@ const LINKS = [
 
 export function AppNav() {
   const pathname = usePathname();
-  const { user } = useUser();
-  const role = user?.publicMetadata?.role as string | undefined;
+  // useRole() returns "owner" in demo mode, so partners see the full nav
+  // (Team + Copilot) without a Clerk session.
+  const role = useRole();
   let links = role === "owner" || role === "admin" ? [...LINKS, { href: "/admin/users", label: "Team" }] : LINKS;
   // Owner only — narrower than "Team" above. The Owner's explicit choice for
   // this feature, not an oversight.
@@ -31,7 +34,7 @@ export function AppNav() {
           </Link>
         );
       })}
-      <UserButton />
+      {DEMO_MODE ? <span className="nav-demo-badge">DEMO</span> : <UserButton />}
     </div>
   );
 }

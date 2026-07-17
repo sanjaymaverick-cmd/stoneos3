@@ -1,0 +1,93 @@
+name: Deploy StoneOS (Demo)
+
+# Builds the DEMO images (no Clerk sign-in, read-only seeded data) and
+# redeploys the isolated demo ECS services. This is a SEPARATE environment
+# from prod — different ECR repos, cluster, services, ALB, and database —
+# so it can never affect the live deployment. See deploy/demo/README.md.
+#
+# Renamed from *.disabled to *.yml only AFTER the one-time demo
+# infrastructure exists (deploy/demo/README.md, step 1) and the deploy role
+# has the demo policy attached (deploy/demo/github-deploy-demo-policy.json).
+
+on:
+  push:
+    branches: [claude/stone-os-demo-deployment-ayggyb]
+    paths-ignore:
+      - "**/*.md"
+      - "deploy/**"
+      - ".gitignore"
+  workflow_dispatch: {}
+
+env:
+  AWS_REGION: ap-south-1
+  AWS_ACCOUNT_ID: "REDACTED-AWS-ACCOUNT-ID"
+  ECS_CLUSTER: stoneos-demo-cluster
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy-demo:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::REDACTED-AWS-ACCOUNT-ID:role/stoneos-github-deploy
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push demo backend image
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          docker build \
+            -t $REGISTRY/stoneos-demo-backend:${{ github.sha }} \
+            -t $REGISTRY/stoneos-demo-backend:latest \
+            ./packages/backend
+          docker push $REGISTRY/stoneos-demo-backend:${{ github.sha }}
+          docker push $REGISTRY/stoneos-demo-backend:latest
+
+      - name: Build and push demo frontend image
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        # NEXT_PUBLIC_DEMO_MODE=true is what makes the frontend skip the Clerk
+        # sign-in wall (see packages/frontend/lib/demo.ts). API URL is the demo
+        # ALB; the Clerk publishable key can be any valid pk_ (ClerkProvider
+        # still mounts, but the demo never routes to sign-in).
+        run: |
+          docker build \
+            --build-arg NEXT_PUBLIC_API_URL="${{ vars.DEMO_NEXT_PUBLIC_API_URL }}" \
+            --build-arg NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY="${{ vars.DEMO_NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}" \
+            --build-arg NEXT_PUBLIC_DEMO_MODE="true" \
+            -t $REGISTRY/stoneos-demo-frontend:${{ github.sha }} \
+            -t $REGISTRY/stoneos-demo-frontend:latest \
+            ./packages/frontend
+          docker push $REGISTRY/stoneos-demo-frontend:${{ github.sha }}
+          docker push $REGISTRY/stoneos-demo-frontend:latest
+
+      - name: Deploy demo backend service
+        run: |
+          aws ecs update-service \
+            --cluster $ECS_CLUSTER \
+            --service stoneos-demo-backend-svc \
+            --force-new-deployment --no-cli-pager
+
+      - name: Deploy demo frontend service
+        run: |
+          aws ecs update-service \
+            --cluster $ECS_CLUSTER \
+            --service stoneos-demo-frontend-svc \
+            --force-new-deployment --no-cli-pager
+
+      - name: Wait for demo services to stabilize
+        run: |
+          aws ecs wait services-stable \
+            --cluster $ECS_CLUSTER \
+            --services stoneos-demo-backend-svc stoneos-demo-frontend-svc
