@@ -1,7 +1,7 @@
 # StoneOS backend — multi-stage build. Final image is small (only prod
 # deps + compiled JS + generated Prisma client), not the whole build toolchain.
 
-FROM node:20-alpine AS builder
+FROM node:24-alpine AS builder
 WORKDIR /app
 # Alpine ships OpenSSL 3.x with no libssl.so.1.1 — Prisma's engine
 # auto-detection needs openssl present to pick the right binary target.
@@ -18,7 +18,7 @@ RUN npx prisma generate
 RUN npm run build
 
 # ---- Production stage ----
-FROM node:20-alpine AS production
+FROM node:24-alpine AS production
 WORKDIR /app
 ENV NODE_ENV=production
 RUN apk add --no-cache openssl
@@ -33,6 +33,13 @@ COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 COPY --from=builder /app/dist ./dist
 COPY prisma ./prisma
+
+# Run unprivileged. The node images already ship a `node` user (uid 1000);
+# a container that runs as root turns any RCE in a dependency into root on
+# the container filesystem. Ownership is set before dropping so the app can
+# still read what it needs.
+RUN chown -R node:node /app
+USER node
 
 EXPOSE 4000
 CMD ["node", "dist/main.js"]

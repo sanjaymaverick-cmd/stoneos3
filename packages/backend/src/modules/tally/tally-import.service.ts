@@ -6,10 +6,33 @@ import { PrismaService } from "../../common/prisma.service";
 // everything else in this codebase. This is the ONE place that matters —
 // get it wrong and every string in the file is garbage double-byte noise.
 function decodeTallyXml(buffer: Buffer): string {
-  let text = buffer.toString("utf16le");
-  if (text.charCodeAt(0) === 0xfeff) text = text.slice(1); // strip BOM
-  if (text.includes("\u0000")) text = buffer.toString("utf8"); // fallback if actually UTF-8
-  return text;
+  // Decide the encoding from the BYTES, not from the decoded string.
+  //
+  // The previous check decoded as UTF-16LE first and looked for a NUL in the
+  // RESULT, but ASCII bytes misread as UTF-16LE pair into non-zero code units,
+  // so a NUL never appeared and the UTF-8 branch was unreachable. A genuinely
+  // UTF-8 export was read as garbage and then rejected downstream with a
+  // misleading "is this really a Day Book export?".
+  //
+  // UTF-16LE-encoded ASCII has a zero as every second byte; UTF-8 text has no
+  // zero bytes at all. A BOM settles it outright; otherwise sample the head.
+  if (buffer.length >= 3 && buffer[0] === 0xef && buffer[1] === 0xbb && buffer[2] === 0xbf) {
+    return buffer.toString("utf8").slice(1); // UTF-8 BOM
+  }
+  if (buffer.length >= 2 && buffer[0] === 0xff && buffer[1] === 0xfe) {
+    return buffer.toString("utf16le").slice(1); // UTF-16LE BOM
+  }
+  if (buffer.length >= 2 && buffer[0] === 0xfe && buffer[1] === 0xff) {
+    const swapped = Buffer.from(buffer); // UTF-16BE — swap pairs, then read as LE
+    swapped.swap16();
+    return swapped.toString("utf16le").slice(1);
+  }
+
+  const sample = buffer.subarray(0, Math.min(buffer.length, 512));
+  let zeroBytes = 0;
+  for (const byte of sample) if (byte === 0) zeroBytes += 1;
+  // A quarter of sampled bytes being zero only happens for UTF-16 text.
+  return zeroBytes > sample.length / 4 ? buffer.toString("utf16le") : buffer.toString("utf8");
 }
 
 function parseTallyDate(yyyymmdd: string): Date {
@@ -42,11 +65,14 @@ interface ParsedDaybook {
 // combining a signed number and a unit, e.g. "2260 SQF" or "-12.5 Nos" —
 // this pulls just the leading numeric part out. Returns null if nothing
 // numeric is found (rather than 0, so a missing quantity isn't confused
-// with a genuine zero).
+// with a genuine zero). Thousands separators are stripped first: Tally
+// emits "2,260 SQF" in grouping locales, and matching before stripping
+// stops at the comma and yields 2 — a silent 1000x under-count.
 function parseTallyQuantity(raw: unknown): number | null {
   if (raw === undefined || raw === null) return null;
   const match = String(raw)
     .trim()
+    .replace(/,/g, "")
     .match(/^-?\d+(\.\d+)?/);
   return match ? parseFloat(match[0]) : null;
 }

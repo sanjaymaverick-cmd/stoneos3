@@ -1,30 +1,35 @@
--- Step 6A follow-up: decouple the main app's RLS exemption from an
--- accidental side effect of the "stoneos" role's superuser status.
+-- Superseded: the app no longer needs BYPASSRLS.
 --
--- Context: Step 6A enabled FORCE ROW LEVEL SECURITY on all 35 tenant-scoped
--- tables. The main app (NestJS/Prisma, via DATABASE_URL) connects as the
--- "stoneos" role, which docker-compose.yml / docker-compose.prod.yml create
--- via POSTGRES_USER — the official postgres image's bootstrap-superuser
--- mechanism. Superusers bypass RLS (and FORCE ROW LEVEL SECURITY)
--- unconditionally, which is currently the ONLY reason the main app's
--- existing queries keep working after Step 6A: they never set
--- app.current_factory_id, because the app enforces tenant isolation in
--- application code (filtering by factoryId directly), not via RLS.
+-- This migration used to run `ALTER ROLE stoneos BYPASSRLS`, because the RLS
+-- migration set FORCE ROW LEVEL SECURITY on every tenant table. FORCE makes
+-- RLS apply even to the table owner, so the application — which owns those
+-- tables and never sets app.current_factory_id on its own connection — read
+-- zero rows from everything. BYPASSRLS papered over that.
 --
--- That is an accident of role setup, not a decision. If "stoneos" is ever
--- changed to a non-superuser role (a normal production-hardening step, and
--- there is no production environment yet), every Prisma query across all 35
--- RLS-protected tables would start evaluating the tenant_isolation policy
--- against an unset session variable and return zero rows everywhere — a
--- total, silent, app-wide outage with no code change to point to.
+-- Two problems: granting BYPASSRLS requires superuser, which managed Postgres
+-- (RDS, Neon, Supabase) does not give you, and a bare ALTER ROLE on a
+-- hardcoded role name fails outright when the app role is called something
+-- else. Between them, this migration could not run on any realistic
+-- production database.
 --
--- Fix: grant BYPASSRLS to "stoneos" explicitly, so the exemption is a named,
--- intentional role attribute instead of a side effect of SUPERUSER. Revoking
--- SUPERUSER from "stoneos" later no longer breaks the app by surprise —
--- BYPASSRLS would have to be revoked too, which is a deliberate, reviewable
--- action tied directly to this comment, not an incidental one.
+-- 20260713000000 now enables RLS WITHOUT forcing it, so the owner is exempt by
+-- ordinary Postgres semantics and no elevated privilege is needed. The
+-- copilot role does not own the tables and stays fully enforced.
 --
--- Does not touch stoneos_copilot_ro: it was already created without
--- BYPASSRLS and stays fully RLS-enforced, which is the actual security
--- boundary for the Copilot's free-form LLM-generated SQL.
-ALTER ROLE stoneos BYPASSRLS;
+-- Kept as a no-op rather than deleted: removing an applied migration changes
+-- the history Prisma has already recorded. The revoke below is deliberately
+-- conditional — it tidies up databases that were bootstrapped under the old
+-- scheme, and does nothing anywhere else, including where the current role
+-- lacks the privilege to revoke anything.
+DO $$
+DECLARE
+  app_role text := current_user;
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = app_role AND rolbypassrls)
+     AND EXISTS (SELECT 1 FROM pg_roles WHERE rolname = current_user AND rolsuper) THEN
+    EXECUTE format('ALTER ROLE %I NOBYPASSRLS', app_role);
+    RAISE NOTICE 'Revoked the no-longer-needed BYPASSRLS from %', app_role;
+  END IF;
+EXCEPTION WHEN insufficient_privilege THEN
+  RAISE NOTICE 'Skipping BYPASSRLS cleanup: not permitted for the current role.';
+END $$;

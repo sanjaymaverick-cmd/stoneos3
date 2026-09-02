@@ -2,9 +2,23 @@
 
 High-level record of significant changes. Commit history has the detail.
 
-## 2026-07-09 — Clerk Core 3 upgrade + first AWS deployment
+## 2026-09-02 — Deployment removed
 
-Took the project from "builds locally" to "live on AWS with CI/CD".
+The project is no longer hosted anywhere. Torn down and deleted from the repo:
+the as-built cloud infrastructure config (`deploy/` — task definitions and IAM
+policies), the `AWS-DEPLOYMENT.md` plan, and the disabled CD workflow
+(`.github/workflows/deploy.yml.disabled`).
+
+Kept: both multi-stage production `Dockerfile`s and `docker-compose.prod.yml`,
+so the release images still build and can be smoke-tested locally. That is an
+image check, not a deployment.
+
+Standing up a new environment is unscoped — no host, managed database, secrets
+store, TLS, or CD pipeline exists.
+
+## 2026-07-09 — Clerk Core 3 upgrade + production image build
+
+Took the project from "builds locally" to "produces working release images".
 
 ### Clerk Core 3 upgrade
 - Ran the `@clerk/upgrade` codemods on both workspaces.
@@ -18,7 +32,7 @@ Took the project from "builds locally" to "live on AWS with CI/CD".
   client-side `AuthGate`. (A `clerkMiddleware()` approach was tried first but
   misbehaved in this environment and is deprecated by Clerk anyway.)
 - Verified end-to-end against a real Clerk session (token exchange → backend
-  `verifyToken` → RDS query → `200`).
+  `verifyToken` → database query → `200`).
 
 ### Production Docker fixes (found via local smoke test)
 - Backend `tsconfig.json` had no `include`, so `prisma/*.ts` was swept into the
@@ -26,23 +40,8 @@ Took the project from "builds locally" to "live on AWS with CI/CD".
 - Prisma engine targeted OpenSSL 1.1 but `node:20-alpine` ships OpenSSL 3.x —
   pinned `binaryTargets` and installed `openssl` in the image.
 
-### AWS deployment (ECS Fargate)
-- Provisioned RDS (Postgres 16, private), ECR, ECS Fargate cluster + 2 services,
-  an ALB with two target groups/listeners, CloudWatch log groups, IAM roles, and
-  security groups. Ran migrations + the owner/factory bootstrap against RDS.
-- App Runner (the original plan) was unavailable on the account
-  (`SubscriptionRequiredException`), so pivoted to ECS Fargate + ALB.
-- Runtime secrets kept in **SSM Parameter Store** (SecureString), referenced by
-  ARN from the task definitions — never in images or git.
-
-### CI/CD
-- Rewrote `.github/workflows/deploy.yml` for ECS: build+push both images to ECR,
-  `force-new-deployment` on both services, wait for stable.
-- AWS auth via **GitHub OIDC** (`stoneos-github-deploy` role) — no long-lived AWS
-  keys in GitHub. Public `NEXT_PUBLIC_*` build args come from repo variables.
-- As-built infra saved under `deploy/` (task defs, IAM policies, architecture
-  README). First pipeline run succeeded; live app verified healthy after it.
+> A cloud environment was also stood up at this point. It has since been torn
+> down and removed from the repo — see the 2026-09-02 entry.
 
 ### Known follow-ups
-HTTPS + custom domain; Clerk dev keys → live keys; RDS backup retention (1 day,
-free-tier cap); a real `/health` endpoint; historical data backfill.
+Clerk dev keys → live keys; a real `/health` endpoint; historical data backfill.

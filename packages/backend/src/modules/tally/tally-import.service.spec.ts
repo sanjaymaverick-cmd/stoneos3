@@ -1,0 +1,139 @@
+import { BadRequestException } from "@nestjs/common";
+import { TallyParserService } from "./tally-import.service";
+
+// Written against stoneos3's own TallyParserService. ston3gpt's spec calls a
+// `parseInventoryEntries()` method that does not exist here — item detail
+// comes back from parseDaybook() as `{ lines, items }` instead.
+
+// Tally exports are usually UTF-16LE with a BOM. decodeTallyXml decides from
+// the bytes, so UTF-8, UTF-8+BOM, UTF-16LE with and without a BOM, and
+// UTF-16BE are all exercised below.
+const utf16 = (xml: string) => Buffer.from(`﻿${xml}`, "utf16le");
+
+function daybook(voucherXml: string) {
+  return `<ENVELOPE><BODY><IMPORTDATA><REQUESTDATA>${voucherXml}</REQUESTDATA></IMPORTDATA></BODY></ENVELOPE>`;
+}
+
+// An item-invoice-mode Sales voucher: the party side sits in LEDGERENTRIES.LIST
+// and the sales ledger side is nested inside ALLINVENTORYENTRIES.LIST.
+const itemInvoiceVoucher = daybook(`<TALLYMESSAGE><VOUCHER VCHTYPE="Sales">
+  <DATE>20260716</DATE>
+  <NARRATION>Slab sale</NARRATION>
+  <LEDGERENTRIES.LIST><LEDGERNAME>Acme Stone</LEDGERNAME><AMOUNT>-452000.00</AMOUNT></LEDGERENTRIES.LIST>
+  <ALLINVENTORYENTRIES.LIST>
+    <STOCKITEMNAME>POLISHED GRANITE SLABS</STOCKITEMNAME>
+    <ACTUALQTY>2260 SQF</ACTUALQTY>
+    <ACCOUNTINGALLOCATIONS.LIST><LEDGERNAME>Sales Account</LEDGERNAME><AMOUNT>452000.00</AMOUNT></ACCOUNTINGALLOCATIONS.LIST>
+  </ALLINVENTORYENTRIES.LIST>
+</VOUCHER></TALLYMESSAGE>`);
+
+describe("TallyParserService.parseDaybook", () => {
+  const parser = new TallyParserService();
+
+  // The load-bearing one. The source comment warns that reading only
+  // LEDGERENTRIES.LIST silently drops half the double-entry for every
+  // Sales/Purchase voucher, leaving the voucher unbalanced.
+  it("captures the ledger side nested inside inventory entries, not just the party side", () => {
+    const { lines } = parser.parseDaybook(utf16(itemInvoiceVoucher));
+
+    expect(lines.map((l) => l.account).sort()).toEqual(["Acme Stone", "Sales Account"]);
+  });
+
+  it("keeps the voucher balanced across both ledger structures", () => {
+    const { lines } = parser.parseDaybook(utf16(itemInvoiceVoucher));
+
+    const debits = lines.reduce((sum, l) => sum + l.debit, 0);
+    const credits = lines.reduce((sum, l) => sum + l.credit, 0);
+    expect(debits).toBe(credits);
+  });
+
+  it("maps a negative Tally amount to a debit and a positive one to a credit", () => {
+    const { lines } = parser.parseDaybook(utf16(itemInvoiceVoucher));
+
+    expect(lines.find((l) => l.account === "Acme Stone")).toMatchObject({ debit: 452000, credit: 0 });
+    expect(lines.find((l) => l.account === "Sales Account")).toMatchObject({ debit: 0, credit: 452000 });
+  });
+
+  it("extracts stock-item detail with its quantity and summed amount", () => {
+    const { items } = parser.parseDaybook(utf16(itemInvoiceVoucher));
+
+    expect(items).toEqual([{
+      voucherType: "Sales",
+      entryDate: new Date("2026-07-16"),
+      stockItemName: "POLISHED GRANITE SLABS",
+      quantity: 2260,
+      amount: 452000,
+    }]);
+  });
+
+  it("reads a UTF-8 export", () => {
+    const { items } = parser.parseDaybook(Buffer.from(itemInvoiceVoucher, "utf8"));
+
+    expect(items[0].stockItemName).toBe("POLISHED GRANITE SLABS");
+  });
+
+  it("reads a UTF-8 export carrying a BOM", () => {
+    const withBom = Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(itemInvoiceVoucher, "utf8")]);
+
+    expect(parser.parseDaybook(withBom).items[0].stockItemName).toBe("POLISHED GRANITE SLABS");
+  });
+
+  it("reads a UTF-16LE export without a BOM", () => {
+    const noBom = Buffer.from(itemInvoiceVoucher, "utf16le");
+
+    expect(parser.parseDaybook(noBom).items[0].stockItemName).toBe("POLISHED GRANITE SLABS");
+  });
+
+  it("reads a UTF-16BE export", () => {
+    const be = Buffer.from("﻿" + itemInvoiceVoucher, "utf16le");
+    be.swap16();
+
+    expect(parser.parseDaybook(be).items[0].stockItemName).toBe("POLISHED GRANITE SLABS");
+  });
+
+  it("reports a null quantity rather than zero when none is present", () => {
+    const xml = daybook(`<TALLYMESSAGE><VOUCHER VCHTYPE="Sales"><DATE>20260716</DATE>
+      <ALLINVENTORYENTRIES.LIST>
+        <STOCKITEMNAME>UNMEASURED</STOCKITEMNAME>
+        <ACCOUNTINGALLOCATIONS.LIST><LEDGERNAME>Sales Account</LEDGERNAME><AMOUNT>100.00</AMOUNT></ACCOUNTINGALLOCATIONS.LIST>
+      </ALLINVENTORYENTRIES.LIST>
+    </VOUCHER></TALLYMESSAGE>`);
+
+    expect(parser.parseDaybook(utf16(xml)).items[0].quantity).toBeNull();
+  });
+
+  it("rejects a file that is not a Day Book export", () => {
+    expect(() => parser.parseDaybook(utf16("<ENVELOPE><BODY></BODY></ENVELOPE>"))).toThrow(BadRequestException);
+  });
+
+  it("rejects an export that parses but yields no ledger entries", () => {
+    const xml = daybook(`<TALLYMESSAGE><VOUCHER VCHTYPE="Sales"><DATE>20260716</DATE></VOUCHER></TALLYMESSAGE>`);
+
+    expect(() => parser.parseDaybook(utf16(xml))).toThrow(/zero ledger entries/);
+  });
+
+  it("parses a comma-formatted quantity at full magnitude", () => {
+    const xml = daybook(`<TALLYMESSAGE><VOUCHER VCHTYPE="Sales"><DATE>20260716</DATE>
+      <ALLINVENTORYENTRIES.LIST>
+        <STOCKITEMNAME>POLISHED GRANITE SLABS</STOCKITEMNAME>
+        <ACTUALQTY>2,260 SQF</ACTUALQTY>
+        <ACCOUNTINGALLOCATIONS.LIST><LEDGERNAME>Sales Account</LEDGERNAME><AMOUNT>452000.00</AMOUNT></ACCOUNTINGALLOCATIONS.LIST>
+      </ALLINVENTORYENTRIES.LIST>
+    </VOUCHER></TALLYMESSAGE>`);
+
+    // Matching before stripping separators would stop at the comma and give 2.
+    expect(parser.parseDaybook(utf16(xml)).items[0].quantity).toBe(2260);
+  });
+
+  it("handles multiple separators and a decimal part", () => {
+    const xml = daybook(`<TALLYMESSAGE><VOUCHER VCHTYPE="Sales"><DATE>20260716</DATE>
+      <ALLINVENTORYENTRIES.LIST>
+        <STOCKITEMNAME>BULK</STOCKITEMNAME>
+        <ACTUALQTY>1,234,567.89 SQF</ACTUALQTY>
+        <ACCOUNTINGALLOCATIONS.LIST><LEDGERNAME>Sales Account</LEDGERNAME><AMOUNT>1.00</AMOUNT></ACCOUNTINGALLOCATIONS.LIST>
+      </ALLINVENTORYENTRIES.LIST>
+    </VOUCHER></TALLYMESSAGE>`);
+
+    expect(parser.parseDaybook(utf16(xml)).items[0].quantity).toBe(1234567.89);
+  });
+});

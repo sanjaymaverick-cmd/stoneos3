@@ -21,9 +21,40 @@
 -- ============================================================
 -- 1. Read-only role
 -- ============================================================
-CREATE ROLE stoneos_copilot_ro LOGIN PASSWORD 'stoneos_dev_only';
+-- Idempotent, password-free, and portable to managed Postgres.
+--
+-- This previously read:
+--     CREATE ROLE stoneos_copilot_ro LOGIN PASSWORD 'stoneos_dev_only';
+--     GRANT CONNECT ON DATABASE stoneos TO stoneos_copilot_ro;
+--
+-- Three problems with that, all of which bite the first time it runs
+-- anywhere other than a throwaway local container:
+--
+--  1. It committed a real login password to the repo. Anyone who could read
+--     the repo knew the credentials of a role that can SELECT every table.
+--     RLS limits that role to zero rows only until the caller sets
+--     app.current_factory_id — which the role can do itself. The password is
+--     now set out-of-band by prisma/provision-db-roles.ts from
+--     COPILOT_DB_PASSWORD, and the role is created NOLOGIN so it is unusable
+--     until that runs.
+--  2. Bare CREATE ROLE fails with "role already exists" when replayed. Roles
+--     are cluster-wide, so Prisma's shadow database hits this on every
+--     `migrate dev` — the long-standing symptom that made `migrate dev`
+--     unusable in this repo.
+--  3. The database name was hardcoded. A managed provider names it whatever
+--     it likes, so the GRANT failed there.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'stoneos_copilot_ro') THEN
+    CREATE ROLE stoneos_copilot_ro NOLOGIN;
+  END IF;
+END $$;
 
-GRANT CONNECT ON DATABASE stoneos TO stoneos_copilot_ro;
+DO $$
+BEGIN
+  EXECUTE format('GRANT CONNECT ON DATABASE %I TO stoneos_copilot_ro', current_database());
+END $$;
+
 GRANT USAGE ON SCHEMA public TO stoneos_copilot_ro;
 
 GRANT SELECT ON
@@ -73,78 +104,60 @@ TO stoneos_copilot_ro;
 --    subquery through their parent's factory_id).
 -- ============================================================
 ALTER TABLE factory ENABLE ROW LEVEL SECURITY;
-ALTER TABLE factory FORCE ROW LEVEL SECURITY;
 ALTER TABLE app_user ENABLE ROW LEVEL SECURITY;
-ALTER TABLE app_user FORCE ROW LEVEL SECURITY;
 ALTER TABLE supplier ENABLE ROW LEVEL SECURITY;
-ALTER TABLE supplier FORCE ROW LEVEL SECURITY;
 ALTER TABLE customer ENABLE ROW LEVEL SECURITY;
-ALTER TABLE customer FORCE ROW LEVEL SECURITY;
 ALTER TABLE machine ENABLE ROW LEVEL SECURITY;
-ALTER TABLE machine FORCE ROW LEVEL SECURITY;
 ALTER TABLE cutting_session ENABLE ROW LEVEL SECURITY;
-ALTER TABLE cutting_session FORCE ROW LEVEL SECURITY;
 ALTER TABLE polishing_session ENABLE ROW LEVEL SECURITY;
-ALTER TABLE polishing_session FORCE ROW LEVEL SECURITY;
 ALTER TABLE vehicle ENABLE ROW LEVEL SECURITY;
-ALTER TABLE vehicle FORCE ROW LEVEL SECURITY;
 ALTER TABLE raw_block ENABLE ROW LEVEL SECURITY;
-ALTER TABLE raw_block FORCE ROW LEVEL SECURITY;
 ALTER TABLE slab ENABLE ROW LEVEL SECURITY;
-ALTER TABLE slab FORCE ROW LEVEL SECURITY;
 ALTER TABLE daily_production_report ENABLE ROW LEVEL SECURITY;
-ALTER TABLE daily_production_report FORCE ROW LEVEL SECURITY;
 ALTER TABLE consumable ENABLE ROW LEVEL SECURITY;
-ALTER TABLE consumable FORCE ROW LEVEL SECURITY;
 ALTER TABLE invoice ENABLE ROW LEVEL SECURITY;
-ALTER TABLE invoice FORCE ROW LEVEL SECURITY;
 ALTER TABLE sales_order ENABLE ROW LEVEL SECURITY;
-ALTER TABLE sales_order FORCE ROW LEVEL SECURITY;
 ALTER TABLE daily_sales_summary ENABLE ROW LEVEL SECURITY;
-ALTER TABLE daily_sales_summary FORCE ROW LEVEL SECURITY;
 ALTER TABLE expense ENABLE ROW LEVEL SECURITY;
-ALTER TABLE expense FORCE ROW LEVEL SECURITY;
 ALTER TABLE tally_import_batch ENABLE ROW LEVEL SECURITY;
-ALTER TABLE tally_import_batch FORCE ROW LEVEL SECURITY;
 ALTER TABLE inventory_snapshot ENABLE ROW LEVEL SECURITY;
-ALTER TABLE inventory_snapshot FORCE ROW LEVEL SECURITY;
 ALTER TABLE utility_reading ENABLE ROW LEVEL SECURITY;
-ALTER TABLE utility_reading FORCE ROW LEVEL SECURITY;
 
 ALTER TABLE cutting_day_log ENABLE ROW LEVEL SECURITY;
-ALTER TABLE cutting_day_log FORCE ROW LEVEL SECURITY;
 ALTER TABLE polishing_session_slab ENABLE ROW LEVEL SECURITY;
-ALTER TABLE polishing_session_slab FORCE ROW LEVEL SECURITY;
 ALTER TABLE raw_block_photo ENABLE ROW LEVEL SECURITY;
-ALTER TABLE raw_block_photo FORCE ROW LEVEL SECURITY;
 ALTER TABLE block_state_transition ENABLE ROW LEVEL SECURITY;
-ALTER TABLE block_state_transition FORCE ROW LEVEL SECURITY;
 ALTER TABLE slab_photo ENABLE ROW LEVEL SECURITY;
-ALTER TABLE slab_photo FORCE ROW LEVEL SECURITY;
 ALTER TABLE slab_state_transition ENABLE ROW LEVEL SECURITY;
-ALTER TABLE slab_state_transition FORCE ROW LEVEL SECURITY;
 ALTER TABLE block_reconciliation ENABLE ROW LEVEL SECURITY;
-ALTER TABLE block_reconciliation FORCE ROW LEVEL SECURITY;
 ALTER TABLE machine_runtime_log ENABLE ROW LEVEL SECURITY;
-ALTER TABLE machine_runtime_log FORCE ROW LEVEL SECURITY;
 ALTER TABLE consumable_purchase ENABLE ROW LEVEL SECURITY;
-ALTER TABLE consumable_purchase FORCE ROW LEVEL SECURITY;
 ALTER TABLE consumable_usage_log ENABLE ROW LEVEL SECURITY;
-ALTER TABLE consumable_usage_log FORCE ROW LEVEL SECURITY;
 ALTER TABLE payment ENABLE ROW LEVEL SECURITY;
-ALTER TABLE payment FORCE ROW LEVEL SECURITY;
 ALTER TABLE sales_line_item ENABLE ROW LEVEL SECURITY;
-ALTER TABLE sales_line_item FORCE ROW LEVEL SECURITY;
 ALTER TABLE expense_allocation ENABLE ROW LEVEL SECURITY;
-ALTER TABLE expense_allocation FORCE ROW LEVEL SECURITY;
 ALTER TABLE tally_ledger_entry ENABLE ROW LEVEL SECURITY;
-ALTER TABLE tally_ledger_entry FORCE ROW LEVEL SECURITY;
 ALTER TABLE tally_voucher_item ENABLE ROW LEVEL SECURITY;
-ALTER TABLE tally_voucher_item FORCE ROW LEVEL SECURITY;
 ALTER TABLE tally_trial_balance_snapshot ENABLE ROW LEVEL SECURITY;
-ALTER TABLE tally_trial_balance_snapshot FORCE ROW LEVEL SECURITY;
 
 -- ============================================================
+-- NOTE ON `FORCE`: these tables are ENABLE ROW LEVEL SECURITY but deliberately
+-- NOT FORCE. In Postgres, RLS never applies to the table OWNER unless FORCE is
+-- set. The application role owns these tables, so without FORCE it reads
+-- normally; stoneos_copilot_ro does NOT own them, so RLS applies to it in
+-- full and still fails closed when app.current_factory_id is unset.
+--
+-- FORCE was the reason this schema needed a superuser: with it set, the app
+-- itself was subject to RLS and saw zero rows, which was patched by granting
+-- the app role BYPASSRLS — a privilege managed Postgres (RDS, Neon, Supabase)
+-- will not hand out. Dropping FORCE removes the superuser dependency entirely
+-- and preserves the security property that actually matters, which is that
+-- LLM-generated SQL cannot cross a tenant boundary.
+--
+-- Verified both directions against a live database: a non-superuser owner
+-- sees its rows without FORCE and zero rows with it; a non-owner sees zero
+-- rows unscoped and only its own factory's rows once scoped.
+
 -- 3a. Direct-column policies (19) — compared as TEXT, no ::uuid cast.
 --     Unset/empty app.current_factory_id -> NULLIF returns NULL ->
 --     `factory_id = NULL` is never true -> zero rows (fail-closed).
