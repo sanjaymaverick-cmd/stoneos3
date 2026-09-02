@@ -1,0 +1,6 @@
+interface:
+  display_name: "Stoneos3"
+  short_description: "Repo-specific patterns and workflows for stoneos3"
+  default_prompt: "Use the stoneos3 repo skill to follow existing architecture, testing, and workflow conventions."
+policy:
+  allow_implicit_invocation: true
