@@ -2,18 +2,16 @@ name: StoneOS Security
 
 # Ported from the ston3gpt build (2026-09-02).
 #
-# This repo is PRIVATE and GitHub Advanced Security is not enabled, so the
-# code-scanning API rejects SARIF uploads with "Resource not accessible by
-# integration". The analysis itself works fine — CodeQL scanned all 101 TS
-# files on the first run — so the scans stay and only the publishing of
-# results is disabled or made non-fatal. Turn both back on in the same
-# change that enables Advanced Security:
-#   - CodeQL:  remove `upload: never`
-#   - Trivy:   remove `continue-on-error` from the upload step
+# This repo is PUBLIC, so GitHub code scanning is available without paying for
+# Advanced Security, and both jobs publish their SARIF to the Security tab.
 #
-# What still HARD-FAILS the workflow, GHAS or not: Trivy finding a HIGH or
-# CRITICAL fixable vulnerability, secret, or misconfiguration (exit-code 1),
-# and CodeQL failing to analyse. Those are the real gates.
+# If it is ever made private again, that API returns "Resource not accessible
+# by integration" and both uploads start failing. The fix then is to add
+# `upload: never` to the CodeQL Analyze step and `continue-on-error: true` to
+# the Trivy upload step — the scans themselves keep working either way.
+#
+# Hard-fails the workflow: Trivy finding a fixable HIGH or CRITICAL
+# vulnerability, secret or misconfiguration, and CodeQL failing to analyse.
 
 on:
   push:
@@ -50,13 +48,8 @@ jobs:
           languages: javascript-typescript
           build-mode: none
 
-      # upload: never — the analysis runs and any failure to analyse still
-      # fails this job; only publishing to the code-scanning UI is skipped,
-      # because that API is unavailable without Advanced Security.
       - name: Analyze
         uses: github/codeql-action/analyze@v3
-        with:
-          upload: never
 
   supply-chain:
     name: Trivy and SBOM
@@ -71,7 +64,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Scan repository with Trivy
-        uses: aquasecurity/trivy-action@0.36.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
           scan-ref: .
@@ -83,11 +76,8 @@ jobs:
           ignore-unfixed: true
           exit-code: "1"
 
-      # Non-fatal for the same reason: the scan above is the gate, this step
-      # only publishes what it found.
       - name: Upload Trivy results
         if: always()
-        continue-on-error: true
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: trivy-results.sarif
