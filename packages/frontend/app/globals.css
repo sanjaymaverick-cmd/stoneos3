@@ -215,6 +215,73 @@ select.field-input { font-family: 'Space Grotesk', sans-serif; font-size: 12.5px
   to { opacity: 1; transform: none; }
 }
 
-@media (max-width: 520px) {
-  .stamp { flex-direction: column; align-items: flex-start; }
+/* ============================================================
+   Phone and tablet
+   ============================================================
+   Operators work on personal Android phones on the shop floor — wet hands,
+   dust, sometimes gloves — and the owner works on an Android tablet. Both are
+   primary devices, not fallbacks, so the layout below is a real design pass
+   rather than a squeeze of the desktop one.
+
+   Zoom stays enabled (see the viewport export in app/layout.tsx); nothing here
+   fixes a font size in a way that fights it. */
+
+/* --- Tablet: the owner's device. Keep the density, widen the gutters. --- */
+@media (max-width: 900px) {
+  .app-shell { padding: 16px 16px 72px; }
+  .recent-columns { gap: 16px; }
+}
+
+/* --- Phone --- */
+@media (max-width: 620px) {
+  .stamp { flex-direction: column; align-items: flex-start; gap: 12px; }
+  .stamp-title { font-size: 16px; }
+  .stamp-sub { font-size: 10px; letter-spacing: 0.8px; }
+
+  .app-shell { padding: 12px 12px 84px; }
+  .ticket { padding: 16px 14px 18px; border-radius: 4px; }
+  /* The notches sit outside the card; at narrow widths they collide with the
+     screen edge and clip, so drop them rather than show half a circle. */
+  .ticket-notch { display: none; }
+
+  /* One field per row. Two 140px columns on a 360px screen leaves labels
+     truncated and inputs too narrow to read a serial in. */
+  .grid, .row-grid, .session-grid { grid-template-columns: 1fr; }
+  .recent-columns { grid-template-columns: 1fr; gap: 18px; }
+
+  /* 16px is the threshold below which Android Chrome zooms the page on focus,
+     which throws the layout sideways mid-entry. Never go under it on inputs. */
+  .field-input, select.field-input { font-size: 16px; padding: 12px 10px; min-height: 48px; }
+  .field-label { font-size: 11px; }
+
+  /* Full-width, thumb-sized actions. 48px is the Android touch-target guidance;
+     a supervisor tapping this has wet hands. */
+  .primary-btn, .add-btn { width: 100%; min-height: 52px; font-size: 15px; }
+  .mini-btn { min-height: 44px; padding: 10px 14px; font-size: 12.5px; }
+
+  /* Wrapped nav chips are easier to hit than a cramped single row. */
+  .nav-links { gap: 6px; }
+  .nav-links a { padding: 10px 12px; font-size: 13px; min-height: 44px; display: flex; align-items: center; }
+
+  .stat-row { gap: 8px; }
+  .stat-card { flex: 1 1 calc(50% - 4px); min-width: 0; padding: 10px 12px; }
+  .stat-number { font-size: 18px; }
+
+  /* Tables stay tabular and scroll horizontally rather than reflowing into
+     cards — a slab list is read by comparing columns, and stacking destroys
+     that. The container already has overflow-x: auto. */
+  .list-table { font-size: 12.5px; }
+  .list-table th, .list-table td { padding: 10px 8px; white-space: nowrap; }
+
+  .mini-bar-row { grid-template-columns: 88px 1fr auto; gap: 8px; }
+  .totals-strip { flex-wrap: wrap; }
+}
+
+/* --- Standalone (installed from the home screen) --- */
+@media (display-mode: standalone) {
+  /* No browser chrome means no browser back button, so the app needs a little
+     more breathing room at the foot for thumb reach. */
+  .app-shell { padding-bottom: 96px; }
+  /* Respect the Android gesture bar / notch, since viewportFit is "cover". */
+  body { padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
 }
