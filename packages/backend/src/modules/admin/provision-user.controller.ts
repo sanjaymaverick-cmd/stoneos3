@@ -3,6 +3,7 @@ import { ClerkAuthGuard } from "../../common/guards/clerk-auth.guard";
 import { RolesGuard } from "../../common/guards/roles.guard";
 import { Roles } from "../../common/decorators/roles.decorator";
 import { CurrentUser, AuthenticatedUser } from "../../common/decorators/current-user.decorator";
+import { USER_MANAGEMENT_ROLES } from "../../common/role-policy";
 import { ProvisionUserService } from "./provision-user.service";
 
 @Controller("admin/users")
@@ -11,13 +12,13 @@ export class ProvisionUserController {
   constructor(private service: ProvisionUserService) {}
 
   @Get()
-  @Roles("owner", "admin")
+  @Roles(...USER_MANAGEMENT_ROLES)
   list(@CurrentUser() user: AuthenticatedUser) {
     return this.service.listUsers(user.factoryId);
   }
 
   @Post()
-  @Roles("owner", "admin")
+  @Roles(...USER_MANAGEMENT_ROLES)
   provision(@CurrentUser() user: AuthenticatedUser, @Body() body: { email: string; role: string }) {
     // Always provisions into the CALLER's own factory — an owner can
     // never accidentally (or deliberately) grant access to a different

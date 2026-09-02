@@ -2,24 +2,15 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useUser, UserButton } from "@clerk/nextjs";
-
-const LINKS = [
-  { href: "/dashboard", label: "Dashboard" },
-  { href: "/dpr", label: "Production" },
-  { href: "/polishing", label: "Polishing" },
-  { href: "/sales", label: "Sales" },
-  { href: "/expenses", label: "Expenses" },
-  { href: "/recovery-ratio", label: "Recovery Ratio" },
-];
+import { navLinksFor } from "../lib/routePolicy";
 
 export function AppNav() {
   const pathname = usePathname();
   const { user } = useUser();
   const role = user?.publicMetadata?.role as string | undefined;
-  let links = role === "owner" || role === "admin" ? [...LINKS, { href: "/admin/users", label: "Team" }] : LINKS;
-  // Owner only — narrower than "Team" above. The Owner's explicit choice for
-  // this feature, not an oversight.
-  if (role === "owner") links = [...links, { href: "/copilot", label: "Copilot" }];
+  // Single source of truth with RouteAccessGuard and the backend RolesGuard —
+  // a link is only rendered if the same policy would let the role open it.
+  const links = navLinksFor(role);
 
   return (
     <div className="nav-links">
