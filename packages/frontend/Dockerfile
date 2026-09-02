@@ -27,5 +27,11 @@ COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/public ./public
 
+# Run unprivileged — see the note in the backend Dockerfile. Next's
+# standalone output only reads from /app at runtime, so dropping privileges
+# after the copies is safe.
+RUN chown -R node:node /app
+USER node
+
 EXPOSE 3000
 CMD ["node", "server.js"]

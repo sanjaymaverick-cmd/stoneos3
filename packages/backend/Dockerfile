@@ -34,5 +34,12 @@ COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 COPY --from=builder /app/dist ./dist
 COPY prisma ./prisma
 
+# Run unprivileged. The node images already ship a `node` user (uid 1000);
+# a container that runs as root turns any RCE in a dependency into root on
+# the container filesystem. Ownership is set before dropping so the app can
+# still read what it needs.
+RUN chown -R node:node /app
+USER node
+
 EXPOSE 4000
 CMD ["node", "dist/main.js"]
