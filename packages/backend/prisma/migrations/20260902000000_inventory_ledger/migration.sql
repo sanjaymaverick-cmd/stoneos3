@@ -154,12 +154,13 @@ CREATE TRIGGER inventory_movement_no_delete
 -- EXPECTED_RLS_TABLES in copilot-readiness.service.ts must list these two as
 -- well, or the Copilot module will refuse to start.
 
+-- ENABLE but deliberately not FORCE — the app owns these tables and is
+-- exempt by ordinary Postgres semantics; the copilot role does not own
+-- them and stays fully enforced. See the note in 20260713000000.
 GRANT SELECT ON inventory_location, inventory_movement TO stoneos_copilot_ro;
 
 ALTER TABLE inventory_location ENABLE ROW LEVEL SECURITY;
-ALTER TABLE inventory_location FORCE ROW LEVEL SECURITY;
 ALTER TABLE inventory_movement ENABLE ROW LEVEL SECURITY;
-ALTER TABLE inventory_movement FORCE ROW LEVEL SECURITY;
 
 CREATE POLICY tenant_isolation ON inventory_location
   USING (factory_id = NULLIF(current_setting('app.current_factory_id', true), ''));

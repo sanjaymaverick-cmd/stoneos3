@@ -124,12 +124,13 @@ ALTER TABLE "opening_inventory_snapshot"
 --
 -- EXPECTED_RLS_TABLES in copilot-readiness.service.ts must list both.
 
+-- ENABLE but deliberately not FORCE — the app owns these tables and is
+-- exempt by ordinary Postgres semantics; the copilot role does not own
+-- them and stays fully enforced. See the note in 20260713000000.
 GRANT SELECT ON opening_inventory_snapshot, opening_inventory_line TO stoneos_copilot_ro;
 
 ALTER TABLE opening_inventory_snapshot ENABLE ROW LEVEL SECURITY;
-ALTER TABLE opening_inventory_snapshot FORCE ROW LEVEL SECURITY;
 ALTER TABLE opening_inventory_line ENABLE ROW LEVEL SECURITY;
-ALTER TABLE opening_inventory_line FORCE ROW LEVEL SECURITY;
 
 CREATE POLICY tenant_isolation ON opening_inventory_snapshot
   USING (factory_id = NULLIF(current_setting('app.current_factory_id', true), ''));

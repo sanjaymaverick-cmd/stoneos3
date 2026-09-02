@@ -74,6 +74,39 @@ environment (host, database, secrets, TLS, CI/CD) is unscoped work.
 | Shared design system | `app/globals.css` — extracted from the DPR artifact so every page matches without re-declaring styles; `components/AppNav.tsx` links Dashboard/Production/Sales/Expenses |
 | Dashboard | Built for owner/admin — `/dashboard` shows 5 real widgets (30-day sales/expense summary, active cutting sessions, raw block stock snapshot, recent activity), role-gated via `useRole()`, verified live in a browser. Every other role sees a placeholder; role-based views for accountant/manager/supervisor/operator/auditor are OUT OF SCOPE for this version (Owner's call, no plan to build them) |
 
+## Setting up a database
+
+Any database, local or hosted, in this order:
+
+```bash
+npx prisma migrate deploy --schema packages/backend/prisma/schema.prisma
+COPILOT_DB_PASSWORD='<generated secret>' npm run db:provision-roles
+OWNER_EMAIL=you@example.com npx ts-node packages/backend/prisma/bootstrap.ts
+```
+
+Migrations create the Copilot's read-only role **without a password and
+without login**, so it cannot connect until `db:provision-roles` gives it
+one. Generate that secret, keep it in a secret store, and use the same value
+in `COPILOT_DATABASE_URL`:
+
+```bash
+node -e "console.log(require('crypto').randomBytes(24).toString('base64url'))"
+```
+
+### What this needs from the database
+
+Only an ordinary application role. **No superuser.** The role must own its
+tables (it does, by running the migrations) and needs `CREATEROLE` so the
+Copilot role can be created. `migrate dev` additionally needs `CREATEDB` for
+Prisma's shadow database; `migrate deploy` does not.
+
+Row-level security is `ENABLE`d but deliberately not `FORCE`d. Postgres
+exempts a table's owner from RLS unless FORCE is set, so the application
+reads normally while `stoneos_copilot_ro` — which owns nothing — stays fully
+enforced and returns zero rows if the factory scope is ever unset. An earlier
+version forced RLS and compensated by granting the app `BYPASSRLS`, which
+needs superuser and is not available on RDS, Neon or Supabase.
+
 ## Multi-tenant enforcement
 
 Every table carries `factory_id`. The enforcement point is

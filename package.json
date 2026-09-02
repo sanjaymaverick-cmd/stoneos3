@@ -15,7 +15,8 @@
     "video:compositions": "npm run compositions --workspace=packages/video",
     "video:typecheck": "npm run typecheck --workspace=packages/video",
     "video:manual": "npm run manual:render --workspace=packages/video",
-    "video:marketing": "npm run marketing:render --workspace=packages/video"
+    "video:marketing": "npm run marketing:render --workspace=packages/video",
+    "db:provision-roles": "npm run db:provision-roles --workspace=packages/backend"
   },
   "allowScripts": {
     "prisma@5.22.0": true,
