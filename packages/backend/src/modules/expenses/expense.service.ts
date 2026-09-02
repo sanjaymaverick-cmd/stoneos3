@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException } from "@nestjs/common";
+import { Injectable, BadRequestException, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../../common/prisma.service";
 
 // Matches the real category list surfaced from Vedam Granites' cash-book —
@@ -59,21 +59,78 @@ export class ExpenseService {
   }
 
   // Cost allocation for cost-per-slab / cost-per-sqft reporting (V2 per
-  // the schema notes, but the endpoint shape is worth having now). Rejects
-  // over-allocation past the expense's own amount to keep the numbers honest.
+  // the schema notes, but the endpoint shape is worth having now).
+  //
+  // The whole thing runs inside one interactive transaction, opened by
+  // locking the expense row with SELECT ... FOR UPDATE. Reading the existing
+  // allocations and writing the new ones must be atomic: without the lock,
+  // two concurrent calls could each read the same "already allocated" total,
+  // each pass the ceiling check, and together blow past the expense amount.
   async allocate(factoryId: string, expenseId: string, allocations: AllocationInput[]) {
-    const expense = await this.prisma.expense.findFirstOrThrow({ where: { id: expenseId, factoryId } });
-    const totalAllocated = allocations.reduce((sum, a) => sum + a.allocatedAmount, 0);
-    if (totalAllocated > Number(expense.amount)) {
-      throw new BadRequestException("Allocated amount exceeds the expense total");
+    if (allocations.length === 0) {
+      throw new BadRequestException("At least one allocation is required");
+    }
+    for (const a of allocations) {
+      if (!(a.allocatedAmount > 0)) {
+        throw new BadRequestException("Every allocatedAmount must be greater than zero");
+      }
     }
 
-    return this.prisma.$transaction(
-      allocations.map((a) =>
-        this.prisma.expenseAllocation.create({
-          data: { expenseId, rawBlockId: a.rawBlockId, allocatedAmount: a.allocatedAmount, allocationMethod: a.allocationMethod },
-        }),
-      ),
-    );
+    return this.prisma.$transaction(async (tx) => {
+      // Lock the expense for the life of the transaction. Scoped by
+      // factory_id so another tenant's expense is never even locked.
+      const locked = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT id FROM expense WHERE id = ${expenseId} AND factory_id = ${factoryId} FOR UPDATE
+      `;
+      if (locked.length === 0) {
+        throw new NotFoundException("Expense not found");
+      }
+
+      const expense = await tx.expense.findFirstOrThrow({ where: { id: expenseId, factoryId } });
+
+      // Every referenced raw block must belong to the caller's factory —
+      // expense_allocation carries no factory_id of its own, so this is the
+      // only tenant boundary on the reference.
+      const rawBlockIds = [...new Set(allocations.map((a) => a.rawBlockId))];
+      const owned = await tx.rawBlock.findMany({
+        where: { id: { in: rawBlockIds }, factoryId },
+        select: { id: true },
+      });
+      if (owned.length !== rawBlockIds.length) {
+        throw new BadRequestException("One or more raw blocks do not belong to this factory");
+      }
+
+      // Count what is ALREADY allocated against this expense, not just what
+      // arrived in this request — otherwise repeated calls each pass on their
+      // own and over-allocate in aggregate.
+      const priorSum = await tx.expenseAllocation.aggregate({
+        where: { expenseId },
+        _sum: { allocatedAmount: true },
+      });
+      const alreadyAllocated = Number(priorSum._sum.allocatedAmount ?? 0);
+      const incoming = allocations.reduce((sum, a) => sum + a.allocatedAmount, 0);
+
+      if (alreadyAllocated + incoming > Number(expense.amount)) {
+        const remaining = Number(expense.amount) - alreadyAllocated;
+        throw new BadRequestException(
+          `Allocated amount exceeds the expense total. ${remaining.toFixed(2)} of ${Number(expense.amount).toFixed(2)} remains unallocated.`,
+        );
+      }
+
+      const created = [];
+      for (const a of allocations) {
+        created.push(
+          await tx.expenseAllocation.create({
+            data: {
+              expenseId,
+              rawBlockId: a.rawBlockId,
+              allocatedAmount: a.allocatedAmount,
+              allocationMethod: a.allocationMethod,
+            },
+          }),
+        );
+      }
+      return created;
+    });
   }
 }
