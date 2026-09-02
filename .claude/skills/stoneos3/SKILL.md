@@ -1,0 +1,242 @@
+---
+name: stoneos3-conventions
+description: Development conventions and patterns for stoneos3. TypeScript React project with freeform commits.
+---
+
+# Stoneos3 Conventions
+
+> Generated from [sanjaymaverick-cmd/stoneos3](https://github.com/sanjaymaverick-cmd/stoneos3) on 2026-09-02
+
+## Overview
+
+This skill teaches Claude the development patterns and conventions used in stoneos3.
+
+## Tech Stack
+
+- **Primary Language**: TypeScript
+- **Framework**: React
+- **Architecture**: feature-based module organization
+- **Test Location**: mixed
+- **Test Framework**: jest
+
+## When to Use This Skill
+
+Activate this skill when:
+- Making changes to this repository
+- Adding new features following established patterns
+- Writing tests that match project conventions
+- Creating commits with proper message format
+
+## Commit Conventions
+
+Follow these commit message conventions based on 15 analyzed commits.
+
+### Commit Style: Free-form Messages
+
+### Message Guidelines
+
+- Average message length: ~41 characters
+- Keep first line concise and descriptive
+- Use imperative mood ("Add feature" not "Added feature")
+
+
+*Commit message example*
+
+```text
+Remove AWS deployment and infrastructure config
+```
+
+*Commit message example*
+
+```text
+Add health probes and HTTP hardening
+```
+
+*Commit message example*
+
+```text
+Add service-level test coverage
+```
+
+*Commit message example*
+
+```text
+Enforce role-based access across all endpoints
+```
+
+*Commit message example*
+
+```text
+Add CI and security workflows
+```
+
+*Commit message example*
+
+```text
+Restrict granting and removing ownership to owners
+```
+
+*Commit message example*
+
+```text
+Enforce the expense allocation ceiling across requests
+```
+
+*Commit message example*
+
+```text
+Fix Tally quantity and encoding parsing
+```
+
+## Architecture
+
+### Project Structure: Monorepo
+
+This project uses **feature-based** module organization.
+
+### Configuration Files
+
+- `.github/workflows/ci.yml`
+- `.github/workflows/deploy.yml.disabled`
+- `.github/workflows/security.yml`
+- `package.json`
+- `packages/backend/Dockerfile`
+- `packages/backend/package.json`
+- `packages/frontend/Dockerfile`
+- `packages/frontend/package.json`
+- `packages/video/package.json`
+- `packages/video/tsconfig.json`
+
+### Guidelines
+
+- Group related code by feature/domain
+- Each feature folder should be self-contained
+- Shared utilities go in a common/shared folder
+
+## Code Style
+
+### Language: TypeScript
+
+### Naming Conventions
+
+| Element | Convention |
+|---------|------------|
+| Files | kebab-case |
+| Functions | camelCase |
+| Classes | PascalCase |
+| Constants | SCREAMING_SNAKE_CASE |
+
+### Import Style: Relative Imports
+
+### Export Style: Named Exports
+
+
+*Preferred import style*
+
+```typescript
+// Use relative imports
+import { Button } from '../components/Button'
+import { useAuth } from './hooks/useAuth'
+```
+
+*Preferred export style*
+
+```typescript
+// Use named exports
+export function calculateTotal() { ... }
+export const TAX_RATE = 0.1
+export interface Order { ... }
+```
+
+## Testing
+
+### Test Framework: jest
+
+### File Pattern: `*.spec.ts`
+
+### Test Types
+
+- **Unit tests**: Test individual functions and components in isolation
+- **Integration tests**: Test interactions between multiple components/services
+
+
+*Test file structure*
+
+```typescript
+import { describe, it, expect } from 'jest'
+
+describe('MyFunction', () => {
+  it('should return expected result', () => {
+    const result = myFunction(input)
+    expect(result).toBe(expected)
+  })
+})
+```
+
+## Error Handling
+
+### Error Handling Style: Try-Catch Blocks
+
+
+*Standard error handling pattern*
+
+```typescript
+try {
+  const result = await riskyOperation()
+  return result
+} catch (error) {
+  console.error('Operation failed:', error)
+  throw new Error('User-friendly message')
+}
+```
+
+## Common Workflows
+
+These workflows were detected from analyzing commit patterns.
+
+### Feature Development
+
+Standard feature implementation workflow
+
+**Frequency**: ~14 times per month
+
+**Steps**:
+1. Add feature implementation
+2. Add tests for feature
+3. Update documentation
+
+**Files typically involved**:
+- `packages/backend/src/*`
+- `packages/backend/src/common/*`
+- `packages/backend/src/modules/admin/*`
+- `**/*.test.*`
+- `**/api/**`
+
+**Example commit sequence**:
+```
+Add health probes and HTTP hardening
+Add service-level test coverage
+Enforce role-based access across all endpoints
+```
+
+
+## Best Practices
+
+Based on analysis of the codebase, follow these practices:
+
+### Do
+
+- Keep feature code co-located in feature folders
+- Write tests using jest
+- Follow *.spec.ts naming pattern
+- Use kebab-case for file names
+- Prefer named exports
+
+### Don't
+
+- Don't skip tests for new features
+- Don't deviate from established patterns without discussion
+
+---
+
+*This skill was auto-generated by [ECC Tools](https://ecc.tools). Review and customize as needed for your team.*
