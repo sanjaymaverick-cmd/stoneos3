@@ -2,7 +2,7 @@
 # (next.config.js has output: "standalone"), which bundles only the
 # traced dependencies a request actually needs, not full node_modules.
 
-FROM node:20-alpine AS builder
+FROM node:24-alpine AS builder
 WORKDIR /app
 
 COPY package.json ./
@@ -19,7 +19,7 @@ ENV NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
 RUN npm run build
 
 # ---- Production stage ----
-FROM node:20-alpine AS production
+FROM node:24-alpine AS production
 WORKDIR /app
 ENV NODE_ENV=production
 
