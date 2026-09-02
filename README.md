@@ -3,17 +3,11 @@
 # StoneOS — Vedam Granites Pilot
 
 Modular monolith. NestJS backend + Next.js frontend, PostgreSQL via Prisma,
-Clerk for auth. **Live on AWS** (RDS + ECS Fargate behind an ALB), deployed
-continuously from `main` via GitHub Actions.
+Clerk for auth. **Runs locally only** — there is no hosted environment.
 
-| | |
-|---|---|
-| **Frontend** | http://stoneos-alb-337796168.ap-south-1.elb.amazonaws.com |
-| **Backend API** | http://stoneos-alb-337796168.ap-south-1.elb.amazonaws.com:8080 |
-| **Infra docs** | [`deploy/README.md`](deploy/README.md) — as-built architecture, resources, CI/CD |
-
-> HTTP only for now (AWS-generated hostname). HTTPS + a custom domain, and
-> swapping Clerk dev keys for live keys, are the remaining hardening steps.
+> No production deployment exists. The AWS infrastructure this project
+> previously ran on has been torn down and its config removed from the repo.
+> Container images still build (see the Dockerfiles), but nothing is hosted.
 
 ## Structure
 
@@ -23,14 +17,8 @@ packages/backend         NestJS API — Prisma schema lives in prisma/schema.pri
 packages/frontend        Next.js app (standalone output for Docker)
                           Dockerfile — production multi-stage build
 docker-compose.yml        Local Postgres for DEVELOPMENT (npm run dev:*)
-docker-compose.prod.yml   Smoke-test the actual production images locally
-                          before pushing to AWS
-deploy/                   AS-BUILT AWS infra — task definitions, IAM policies,
-                          architecture README (what is actually deployed)
-AWS-DEPLOYMENT.md         SUPERSEDED App Runner plan — kept for reference only;
-                          see deploy/README.md for the real ECS Fargate setup
-.github/workflows/deploy.yml   CI/CD — builds + pushes images and redeploys both
-                          ECS services on push to main (AWS auth via GitHub OIDC)
+docker-compose.prod.yml   Build + run the production container images locally
+                          (image smoke test — not a hosted environment)
 stoneos-mvp-schema.sql   Reference DDL (source of truth for the data model —
                          keep schema.prisma in sync with this manually for now)
 ```
@@ -55,33 +43,17 @@ and `/sign-up`; a client-side `AuthGate` redirects unauthenticated users.
 
 ## Deployment
 
-Live on **AWS ECS Fargate** behind an Application Load Balancer, with a
-private **RDS PostgreSQL** database, in `ap-south-1`. Runtime secrets are
-in SSM Parameter Store (never in images or git). Push to `main` triggers
-GitHub Actions, which builds+pushes both images to ECR and force-deploys
-both ECS services — AWS auth is via **GitHub OIDC**, so no long-lived AWS
-keys are stored in GitHub.
+**None.** There is no hosted environment — the app runs locally only.
 
-```
-                       Internet
-                          │
-              ┌───────────┴───────────┐
-              │   ALB (stoneos-alb)   │
-              │  :80   → frontend     │
-              │  :8080 → backend API  │
-              └───────┬───────┬───────┘
-           frontend svc│       │backend svc      ECS Fargate
-              (Next.js)│       │(NestJS)         (stoneos-cluster)
-              :3000    │       │:4000
-                               │ 5432
-                         ┌─────▼──────┐
-                         │  RDS PG 16 │  stoneos-db (private)
-                         └────────────┘
+Both packages still carry multi-stage production `Dockerfile`s, so the
+release images can be built and smoke-tested locally:
+
+```bash
+docker compose -f docker-compose.prod.yml up --build
 ```
 
-Full resource inventory, security groups, IAM, and the migration/bootstrap
-runbook are in [`deploy/README.md`](deploy/README.md). Local production-image
-smoke test: `docker compose -f docker-compose.prod.yml up --build`.
+That is an image sanity check, not a deployment. Standing up a real
+environment (host, database, secrets, TLS, CI/CD) is unscoped work.
 
 ## What's built vs. stubbed
 
@@ -124,12 +96,16 @@ the codebase — if you add one, you've broken tenant isolation.
 5. ~~Per-slab dimension overrides~~ — DONE. `CuttingSession.complete()` accepts an opt-in `slabOverrides` array for the rare mixed-size batch; the default uniform-size path is unchanged.
 6. ~~Item-level Tally detail~~ — DONE (code-complete). `TallyVoucherItem` + `GET /tally-import/item-cross-check` cross-checks sqft against `sales_line_item`. Real-data verification against an actual Tally export is OUT OF SCOPE for now (Owner's call) — no sample export exists in this repo, and it isn't being pursued at the moment.
 
-**Get to a real deployment — DONE, now LIVE (see `deploy/README.md`):**
-7. ~~Dockerfile~~ — DONE, both backend and frontend, multi-stage production builds.
-8. ~~AWS deployment~~ — DONE and LIVE on ECS Fargate + ALB + RDS in `ap-south-1`. CI/CD redeploys on every push to `main` via GitHub Actions (OIDC auth, no stored AWS keys). App Runner was the original plan but wasn't available on the account, so we run on ECS instead. Full details in [`deploy/README.md`](deploy/README.md).
+**Deployment — REMOVED, no longer in scope:**
+7. ~~Dockerfile~~ — DONE, both backend and frontend, multi-stage production builds. Kept: the
+   images still build and can be smoke-tested locally via `docker-compose.prod.yml`.
+8. **Hosting — none.** The project previously ran on AWS; that environment has been torn down
+   and all of its config (`deploy/`, `AWS-DEPLOYMENT.md`, the deploy workflow) removed from the
+   repo. Standing up a new environment is unscoped — no host, database, secrets store, TLS, or
+   CD pipeline exists.
 9. ~~Backfill the historical data~~ — script built and confirmed against local Postgres
-   (`packages/backend/prisma/backfill-historical.ts`). Running it against any real/production
-   database is OUT OF SCOPE for the team — Owner does that manually himself.
+   (`packages/backend/prisma/backfill-historical.ts`). Running it against any real database is
+   OUT OF SCOPE for the team — Owner does that manually himself.
 
 **The bigger one, once the above is live:**
 10. The AI Business Analyst / Copilot itself — the actual reason StoneOS exists, per the original spec. Everything so far has been the foundation (clean structured data, traceability, the semantic layer it needs to reason over). This hasn't been started yet, and it's the natural next phase once real data is flowing daily rather than sitting in our working files.

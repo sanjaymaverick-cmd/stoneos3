@@ -1,5 +1,7 @@
 version: "3.9"
-# Smoke-test the ACTUAL production images locally before pushing to AWS.
+# Build and run the ACTUAL production images locally, as an image sanity
+# check. There is no hosted environment — this is the only place the
+# release images get exercised.
 # This is not for day-to-day development (use docker-compose.yml at the
 # repo root + `npm run dev:*` for that, which is faster iteration).
 #

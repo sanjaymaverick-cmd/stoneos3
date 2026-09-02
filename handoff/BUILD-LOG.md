@@ -37,8 +37,8 @@ build only ever sees the latter), verified via a simulated isolated install matc
 exact build context. Merged to `main`, verified with a full `tsc --noEmit` + `npm run build`
 pass in both packages after merging. All four of this session's parallel steps (5A/5B/5C/5D) are
 now on `main`.
-**Repo:** `origin` is `https://github.com/sanjaymaverick-cmd/stoneos3.git`. CI/CD deploy
-workflow remains disabled (`deploy.yml.disabled`) — pushes trigger nothing.
+**Repo:** `origin` is `https://github.com/sanjaymaverick-cmd/stoneos3.git`. There is no CD
+pipeline — pushes trigger nothing.
 **Bootstrap:** Run 2026-07-11 (`prisma/bootstrap.ts`, local Postgres) — `sanjay.maverick@gmail.com`
 granted owner access to the existing "Vedam Granites" factory (`4485c4f7-...`), B-21/LPM
 machines seeded. Fixed `bootstrap.ts` first to reuse an existing factory by name instead of
@@ -47,10 +47,10 @@ unconditionally creating one — the factory row already existed (from Step 1's 
 have created a duplicate factory and orphaned that data from the owner grant. Verified directly
 against Postgres (not just script output): 1 factory, 2 machines, 1 app_user row, all correctly
 linked.
-**Pending deploy:** No production environment exists for this project — the old AWS deployment
-(stoneos-db/ECS/ALB under the old `sos` remote) is out of scope entirely (2026-07-11 decision).
-Historical-backfill execution against any future real environment is the Owner's own manual
-responsibility, not the team's.
+**Hosting:** None. No hosted environment exists for this project, and standing one up is
+unscoped — all cloud infrastructure config was removed from the repo on 2026-09-02 (see
+CHANGELOG). Historical-backfill execution against any future real environment is the Owner's
+own manual responsibility, not the team's.
 
 ---
 

@@ -84,8 +84,7 @@ live test happens and surfaces anything.
 
 **Repo:** `origin` is `https://github.com/sanjaymaverick-cmd/stoneos3.git`. Local `main` and
 `origin/main` are identical at `7a79ac4`, confirmed synced both directions (fetched and
-compared, not just trusting push output). CI/CD deploy workflow remains disabled
-(`deploy.yml.disabled`).
+compared, not just trusting push output). There is no CD pipeline — pushes trigger nothing.
 
 ---
 
@@ -120,8 +119,8 @@ compared, not just trusting push output). CI/CD deploy workflow remains disabled
 
 ## Still Open
 
-- Production/AWS: still no production environment exists at all. Unchanged from prior
-  sessions — see `project-stoneos-production-deploy-hold` memory.
+- Hosting: no environment exists at all, and standing one up is unscoped. All cloud
+  infrastructure config was removed from the repo on 2026-09-02 (see CHANGELOG).
 - **Live end-to-end test of `/copilot/ask`** — blocked on the Gemini account's free-tier quota
   provisioning clearing (Owner's own step, on Google's side, see above). Everything else in the
   Copilot feature is built, reviewed, and independently verified.
