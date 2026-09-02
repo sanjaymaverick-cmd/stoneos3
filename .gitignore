@@ -12,6 +12,13 @@ dist/
 out/
 *.tsbuildinfo
 
+# rendered video output — regenerate with `npm run video:manual` /
+# `npm run video:marketing`. The render INPUTS (voiceover audio and
+# marketing stills under packages/video/public) are tracked; the finished
+# MP4s and QA stills are build artifacts and are not.
+artifacts/
+packages/video/out/
+
 # logs
 npm-debug.log*
 *.log

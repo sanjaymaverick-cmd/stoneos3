@@ -1,0 +1,27 @@
+{
+  "name": "@stoneos/video",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "studio": "remotion studio src/index.ts",
+    "compositions": "remotion compositions src/index.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "manual:stills": "node scripts/render-manual-stills.mjs",
+    "manual:render": "remotion render src/index.ts StoneOSProductManual ../../artifacts/product-manual/StoneOS_Product_Manual_Video.mp4 --codec=h264 --audio-codec=aac --crf=20",
+    "marketing:stills": "node scripts/render-marketing-stills.mjs",
+    "marketing:render": "remotion render src/index.ts StoneOSPartnerMarketing ../../artifacts/product-marketing/StoneOS_Partner_Marketing_Demo.mp4 --codec=h264 --audio-codec=aac --crf=20",
+    "render": "remotion render src/index.ts StoneOSDemo out/stoneos-demo.mp4"
+  },
+  "dependencies": {
+    "@remotion/cli": "^4.0.489",
+    "@remotion/renderer": "^4.0.489",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "remotion": "^4.0.489"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "typescript": "^7.0.2"
+  }
+}
