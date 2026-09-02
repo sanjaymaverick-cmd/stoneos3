@@ -2,11 +2,14 @@ import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "../../common/prisma.service";
 
-// The exact 35 tenant-scoped tables Step 6A put RLS + a tenant_isolation
-// policy on — copied VERBATIM from
-// packages/backend/prisma/migrations/20260713000000_copilot_rls_readonly_role/migration.sql
-// (the CREATE POLICY statements, sections 3a + 3b), not re-derived by hand,
-// so this list can never silently drift from the actual migration.
+// The exact 37 tenant-scoped tables carrying RLS + a tenant_isolation
+// policy — copied VERBATIM from the CREATE POLICY statements in
+//   20260713000000_copilot_rls_readonly_role (35: sections 3a + 3b)
+//   20260902000000_inventory_ledger        (2: inventory_location,
+//                                              inventory_movement)
+// not re-derived by hand, so this list cannot silently drift from the
+// migrations. EVERY future tenant-scoped table must be added to an RLS
+// migration and to this list together, or the Copilot refuses to start.
 export const EXPECTED_RLS_TABLES: readonly string[] = [
   // 3a. Direct-column policies (19)
   "factory",
@@ -28,6 +31,9 @@ export const EXPECTED_RLS_TABLES: readonly string[] = [
   "tally_import_batch",
   "inventory_snapshot",
   "utility_reading",
+  // Added by 20260902000000_inventory_ledger (direct factory_id column).
+  "inventory_location",
+  "inventory_movement",
   // 3b. Child-table policies (16)
   "cutting_day_log",
   "polishing_session_slab",

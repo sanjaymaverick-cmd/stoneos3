@@ -20,6 +20,10 @@ import { ProvisionUserController } from "../modules/admin/provision-user.control
 import { CopilotController } from "../modules/copilot/copilot.controller";
 import { RawBlockController } from "../modules/inventory/raw-block.controller";
 import { SlabController } from "../modules/inventory/slab.controller";
+import {
+  InventoryLocationController,
+  InventoryMovementController,
+} from "../modules/inventory/inventory-ledger.controller";
 import { DprController } from "../modules/production/dpr.controller";
 import { MachineLogController } from "../modules/production/machine-log.controller";
 import { MachineController } from "../modules/production/machine.controller";
@@ -58,6 +62,13 @@ const ENDPOINTS: Array<{ name: string; handler: Function; roles: string[] }> = [
   { name: "one slab", handler: SlabController.prototype.findOne, roles: SALES_READ_ROLES },
   { name: "create slab", handler: SlabController.prototype.create, roles: INVENTORY_DATA_ROLES },
   { name: "transition slab", handler: SlabController.prototype.transition, roles: PRODUCTION_INPUT_ROLES },
+
+  { name: "list inventory locations", handler: InventoryLocationController.prototype.findAll, roles: SALES_READ_ROLES },
+  { name: "seed default locations", handler: InventoryLocationController.prototype.seedDefaults, roles: USER_MANAGEMENT_ROLES },
+  { name: "read movement history", handler: InventoryMovementController.prototype.history, roles: SALES_READ_ROLES },
+  { name: "read on-hand by location", handler: InventoryMovementController.prototype.onHand, roles: SALES_READ_ROLES },
+  { name: "post a movement", handler: InventoryMovementController.prototype.record, roles: INVENTORY_DATA_ROLES },
+  { name: "reverse a movement", handler: InventoryMovementController.prototype.reverse, roles: USER_MANAGEMENT_ROLES },
 
   { name: "read DPR", handler: DprController.prototype.findByDate, roles: ANY_PROVISIONED_ROLE },
   { name: "write DPR", handler: DprController.prototype.upsert, roles: PRODUCTION_INPUT_ROLES },
@@ -153,6 +164,10 @@ describe("the operating rule holds end to end", () => {
     expect(allows("supervisor", DailySalesSummaryController.prototype.backfill)).toBe(false);
     expect(allows("supervisor", MachineController.prototype.create)).toBe(false);
     expect(allows("supervisor", RawBlockController.prototype.reconcile)).toBe(false);
+    // A supervisor may move stock, but correcting the permanent ledger is
+    // an elevated action.
+    expect(allows("supervisor", InventoryMovementController.prototype.record)).toBe(true);
+    expect(allows("supervisor", InventoryMovementController.prototype.reverse)).toBe(false);
   });
 
   it("gives owner, admin and manager the elevated surface alike", () => {
