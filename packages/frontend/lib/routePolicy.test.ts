@@ -20,12 +20,14 @@ test("supervisor can operate and sell but cannot administer", () => {
   assert.equal(canAccessRoute("supervisor", "/sales"), true);
   assert.equal(canAccessRoute("supervisor", "/expenses"), true);
   assert.equal(canAccessRoute("supervisor", "/admin/users"), false);
+  assert.equal(canAccessRoute("supervisor", "/setup/opening-inventory"), false);
   assert.equal(canAccessRoute("supervisor", "/copilot"), false);
 });
 
 test("owner, admin and manager all reach administration", () => {
   for (const role of ["owner", "admin", "manager"]) {
     assert.equal(canAccessRoute(role, "/admin/users"), true);
+    assert.equal(canAccessRoute(role, "/setup/opening-inventory"), true);
     assert.equal(canAccessRoute(role, "/dashboard"), true);
     assert.equal(canAccessRoute(role, "/sales"), true);
   }
@@ -80,6 +82,8 @@ test("nav never offers a link the guard would refuse", () => {
 test("nav reflects the role", () => {
   const hrefs = (role: string) => navLinksFor(role).map((l) => l.href);
   assert.deepEqual(hrefs("operator"), ["/dashboard", "/dpr", "/polishing"]);
+  assert.ok(hrefs("manager").includes("/setup/opening-inventory"));
+  assert.ok(!hrefs("supervisor").includes("/setup/opening-inventory"));
   assert.ok(hrefs("owner").includes("/copilot"));
   assert.ok(!hrefs("manager").includes("/copilot"));
   assert.ok(hrefs("manager").includes("/admin/users"));

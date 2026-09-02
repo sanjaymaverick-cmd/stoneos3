@@ -7,14 +7,17 @@ import { SlabService } from "./slab.service";
 import { InventoryLocationController, InventoryMovementController } from "./inventory-ledger.controller";
 import { InventoryLocationService } from "./inventory-location.service";
 import { InventoryMovementService } from "./inventory-movement.service";
+import { OpeningInventoryController } from "./opening-inventory.controller";
+import { OpeningInventoryService } from "./opening-inventory.service";
 
 @Module({
-  controllers: [RawBlockController, SlabController, InventoryLocationController, InventoryMovementController],
+  controllers: [RawBlockController, SlabController, InventoryLocationController, InventoryMovementController, OpeningInventoryController],
   providers: [
     RawBlockService,
     SlabService,
     InventoryLocationService,
     InventoryMovementService,
+    OpeningInventoryService,
     PrismaService,
   ],
   // Exported so production sessions can post movements inside their own

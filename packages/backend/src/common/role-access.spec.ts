@@ -24,6 +24,7 @@ import {
   InventoryLocationController,
   InventoryMovementController,
 } from "../modules/inventory/inventory-ledger.controller";
+import { OpeningInventoryController } from "../modules/inventory/opening-inventory.controller";
 import { DprController } from "../modules/production/dpr.controller";
 import { MachineLogController } from "../modules/production/machine-log.controller";
 import { MachineController } from "../modules/production/machine.controller";
@@ -69,6 +70,16 @@ const ENDPOINTS: Array<{ name: string; handler: Function; roles: string[] }> = [
   { name: "read on-hand by location", handler: InventoryMovementController.prototype.onHand, roles: SALES_READ_ROLES },
   { name: "post a movement", handler: InventoryMovementController.prototype.record, roles: INVENTORY_DATA_ROLES },
   { name: "reverse a movement", handler: InventoryMovementController.prototype.reverse, roles: USER_MANAGEMENT_ROLES },
+
+  { name: "read opening count", handler: OpeningInventoryController.prototype.current, roles: SALES_READ_ROLES },
+  { name: "read one opening count", handler: OpeningInventoryController.prototype.findOne, roles: SALES_READ_ROLES },
+  { name: "start opening count", handler: OpeningInventoryController.prototype.start, roles: HISTORICAL_IMPORT_ROLES },
+  { name: "count a raw block", handler: OpeningInventoryController.prototype.addRawBlock, roles: HISTORICAL_IMPORT_ROLES },
+  { name: "count a slab", handler: OpeningInventoryController.prototype.addSlab, roles: HISTORICAL_IMPORT_ROLES },
+  { name: "remove a count line", handler: OpeningInventoryController.prototype.removeLine, roles: HISTORICAL_IMPORT_ROLES },
+  { name: "submit opening count", handler: OpeningInventoryController.prototype.submit, roles: HISTORICAL_IMPORT_ROLES },
+  { name: "approve opening count", handler: OpeningInventoryController.prototype.approve, roles: HISTORICAL_IMPORT_ROLES },
+  { name: "reject opening count", handler: OpeningInventoryController.prototype.reject, roles: HISTORICAL_IMPORT_ROLES },
 
   { name: "read DPR", handler: DprController.prototype.findByDate, roles: ANY_PROVISIONED_ROLE },
   { name: "write DPR", handler: DprController.prototype.upsert, roles: PRODUCTION_INPUT_ROLES },
@@ -168,6 +179,10 @@ describe("the operating rule holds end to end", () => {
     // an elevated action.
     expect(allows("supervisor", InventoryMovementController.prototype.record)).toBe(true);
     expect(allows("supervisor", InventoryMovementController.prototype.reverse)).toBe(false);
+    // Establishing the factory's opening position is an elevated act, not
+    // routine counting work.
+    expect(allows("supervisor", OpeningInventoryController.prototype.approve)).toBe(false);
+    expect(allows("supervisor", OpeningInventoryController.prototype.start)).toBe(false);
   });
 
   it("gives owner, admin and manager the elevated surface alike", () => {

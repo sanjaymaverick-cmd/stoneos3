@@ -24,6 +24,9 @@ const EXPENSE_DATA = [...ELEVATED_ROLES, "supervisor", "accountant"];
 // the "/" catch-all. Order within the list does not matter.
 const POLICIES: Array<{ prefix: string; roles: string[] }> = [
   { prefix: "/admin", roles: ELEVATED_ROLES },
+  // The opening count establishes the factory's starting stock and flips it
+  // live — matches HISTORICAL_IMPORT_ROLES on the backend.
+  { prefix: "/setup", roles: ELEVATED_ROLES },
   // Narrower than the rest of the elevated tier — matches @Roles("owner") on
   // POST /copilot/ask. The Owner's explicit choice, not an oversight.
   { prefix: "/copilot", roles: ["owner"] },
@@ -65,6 +68,7 @@ export function navLinksFor(role: string | undefined) {
     { href: "/sales", label: "Sales" },
     { href: "/expenses", label: "Expenses" },
     { href: "/recovery-ratio", label: "Recovery Ratio" },
+    { href: "/setup/opening-inventory", label: "Opening Count" },
     { href: "/admin/users", label: "Team" },
     { href: "/copilot", label: "Copilot" },
   ];

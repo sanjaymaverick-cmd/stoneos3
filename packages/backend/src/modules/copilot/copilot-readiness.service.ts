@@ -2,11 +2,14 @@ import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "../../common/prisma.service";
 
-// The exact 37 tenant-scoped tables carrying RLS + a tenant_isolation
+// The exact 39 tenant-scoped tables carrying RLS + a tenant_isolation
 // policy — copied VERBATIM from the CREATE POLICY statements in
 //   20260713000000_copilot_rls_readonly_role (35: sections 3a + 3b)
 //   20260902000000_inventory_ledger        (2: inventory_location,
 //                                              inventory_movement)
+//   20260902010000_opening_inventory       (2: opening_inventory_snapshot
+//                                              direct; opening_inventory_line
+//                                              via its parent snapshot)
 // not re-derived by hand, so this list cannot silently drift from the
 // migrations. EVERY future tenant-scoped table must be added to an RLS
 // migration and to this list together, or the Copilot refuses to start.
@@ -34,7 +37,8 @@ export const EXPECTED_RLS_TABLES: readonly string[] = [
   // Added by 20260902000000_inventory_ledger (direct factory_id column).
   "inventory_location",
   "inventory_movement",
-  // 3b. Child-table policies (16)
+  "opening_inventory_snapshot",
+  // 3b. Child-table policies (17)
   "cutting_day_log",
   "polishing_session_slab",
   "raw_block_photo",
@@ -51,6 +55,8 @@ export const EXPECTED_RLS_TABLES: readonly string[] = [
   "tally_ledger_entry",
   "tally_voucher_item",
   "tally_trial_balance_snapshot",
+  // Added by 20260902010000_opening_inventory (scoped via its parent snapshot).
+  "opening_inventory_line",
 ];
 
 interface RlsStatusRow {

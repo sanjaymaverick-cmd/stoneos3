@@ -63,14 +63,60 @@ enum InventoryMovementType {
   REVERSAL
 }
 
+// ============================================================
+// Opening inventory count (item 6 of the ston3gpt import)
+// ============================================================
+
+// Where a factory is in its lifecycle. A factory only becomes LIVE when an
+// owner or manager approves its opening count, which is what stops day-to-day
+// work starting on top of an unverified stock position.
+enum FactoryOperatingStatus {
+  SETUP
+  OPENING_COUNT_IN_PROGRESS
+  OPENING_PENDING_APPROVAL
+  LIVE
+  LOCKED
+}
+
+enum OpeningSnapshotStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  REJECTED
+}
+
+// What is being counted at each step of the guided flow.
+enum InventoryKind {
+  RAW_BLOCK
+  UNPOLISHED_SLAB
+  POLISHED_SLAB
+}
+
+// Stock physically present but not owned still has to be counted, or the
+// yard will not reconcile against what is standing in it.
+enum OwnershipType {
+  OWNED
+  CUSTOMER_OWNED
+}
+
+// Whether a line was actually counted or is an informed estimate. Estimated
+// lines are what raw_block.cost_status = 'estimated' later reconciles.
+enum VerificationStatus {
+  PHYSICALLY_COUNTED
+  ESTIMATED
+}
+
 model Factory {
   id        String   @id @default(uuid())
   name      String
   location  String?
   createdAt DateTime @default(now()) @map("created_at")
 
+  operatingStatus FactoryOperatingStatus @default(SETUP) @map("operating_status")
+
   inventoryLocations InventoryLocation[]
   inventoryMovements InventoryMovement[]
+  openingSnapshots   OpeningInventorySnapshot[]
 
   users               AppUser[]
   suppliers           Supplier[]
@@ -338,6 +384,7 @@ model RawBlock {
   locationId      String?                @map("location_id")
   location        InventoryLocation?     @relation(fields: [locationId], references: [id])
   movements       InventoryMovement[]
+  openingLines    OpeningInventoryLine[]
 
   @@unique([factoryId, serialNumber])
   @@map("raw_block")
@@ -373,8 +420,12 @@ model Slab {
   id               String          @id @default(uuid())
   factoryId        String          @map("factory_id")
   factory          Factory         @relation(fields: [factoryId], references: [id])
-  parentBlockId    String          @map("parent_block_id") // permanent, never reassigned
-  parentBlock      RawBlock        @relation(fields: [parentBlockId], references: [id])
+  // Permanent, never reassigned. NULLABLE only for opening-inventory slabs:
+  // stock counted when the factory went live predates this system, so its
+  // parent block genuinely is unknown rather than missing by mistake. Every
+  // slab produced BY this system (CuttingSession.complete) always sets it.
+  parentBlockId    String?         @map("parent_block_id")
+  parentBlock      RawBlock?       @relation(fields: [parentBlockId], references: [id])
   cuttingSessionId String?         @map("cutting_session_id") // which B-21 session produced it
   cuttingSession   CuttingSession? @relation(fields: [cuttingSessionId], references: [id])
   slabSerial       String          @map("slab_serial")
@@ -413,6 +464,7 @@ model Slab {
   locationId            String?                @map("location_id")
   location              InventoryLocation?     @relation(fields: [locationId], references: [id])
   movements             InventoryMovement[]
+  openingLines          OpeningInventoryLine[]
 
   @@unique([factoryId, slabSerial])
   @@map("slab")
@@ -782,10 +834,11 @@ model InventoryLocation {
   active       Boolean               @default(true)
   createdAt    DateTime              @default(now()) @map("created_at")
 
-  rawBlocks    RawBlock[]
-  slabs        Slab[]
-  movementFrom InventoryMovement[] @relation("MovementFromLocation")
-  movementTo   InventoryMovement[] @relation("MovementToLocation")
+  rawBlocks            RawBlock[]
+  slabs                Slab[]
+  movementFrom         InventoryMovement[]    @relation("MovementFromLocation")
+  movementTo           InventoryMovement[]    @relation("MovementToLocation")
+  OpeningInventoryLine OpeningInventoryLine[]
 
   @@unique([factoryId, code])
   @@map("inventory_location")
@@ -837,4 +890,52 @@ model InventoryMovement {
   @@index([factoryId, rawBlockId])
   @@index([factoryId, slabId])
   @@map("inventory_movement")
+}
+
+// One factory's opening stock count. There is normally exactly one that
+// reaches APPROVED — the moment the factory's books start.
+model OpeningInventorySnapshot {
+  id              String                @id @default(uuid())
+  factoryId       String                @map("factory_id")
+  factory         Factory               @relation(fields: [factoryId], references: [id])
+  countDate       DateTime              @map("count_date") @db.Date
+  status          OpeningSnapshotStatus @default(DRAFT)
+  createdBy       String                @map("created_by")
+  submittedBy     String?               @map("submitted_by")
+  submittedAt     DateTime?             @map("submitted_at")
+  approvedBy      String?               @map("approved_by")
+  approvedAt      DateTime?             @map("approved_at")
+  rejectedBy      String?               @map("rejected_by")
+  rejectedAt      DateTime?             @map("rejected_at")
+  rejectionReason String?               @map("rejection_reason")
+  createdAt       DateTime              @default(now()) @map("created_at")
+  updatedAt       DateTime              @updatedAt @map("updated_at")
+
+  lines OpeningInventoryLine[]
+
+  @@map("opening_inventory_snapshot")
+}
+
+// One counted item. The raw block or slab row is created as it is counted,
+// and this line points at it, so approving the snapshot has real inventory to
+// place rather than having to invent it.
+model OpeningInventoryLine {
+  id                 String                   @id @default(uuid())
+  snapshotId         String                   @map("snapshot_id")
+  snapshot           OpeningInventorySnapshot @relation(fields: [snapshotId], references: [id])
+  inventoryKind      InventoryKind            @map("inventory_kind")
+  rawBlockId         String?                  @map("raw_block_id")
+  rawBlock           RawBlock?                @relation(fields: [rawBlockId], references: [id])
+  slabId             String?                  @map("slab_id")
+  slab               Slab?                    @relation(fields: [slabId], references: [id])
+  areaSqft           Decimal?                 @map("area_sqft") @db.Decimal(12, 2)
+  openingValue       Decimal?                 @map("opening_value") @db.Decimal(14, 2)
+  locationId         String                   @map("location_id")
+  location           InventoryLocation        @relation(fields: [locationId], references: [id])
+  ownershipType      OwnershipType            @default(OWNED) @map("ownership_type")
+  verificationStatus VerificationStatus       @default(PHYSICALLY_COUNTED) @map("verification_status")
+  notes              String?
+  createdAt          DateTime                 @default(now()) @map("created_at")
+
+  @@map("opening_inventory_line")
 }

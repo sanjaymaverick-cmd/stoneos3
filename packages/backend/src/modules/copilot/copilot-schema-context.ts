@@ -5,8 +5,9 @@
 // carry the real business-meaning comments already in that file (recovery
 // ratio, provisional-only fields, etc.), which a raw catalog dump can't do.
 //
-// Table selection (33 of the 37 stoneos_copilot_ro/RLS-protected tables —
-// see the Step 6A and inventory-ledger migrations for the full 37):
+// Table selection (35 of the 39 stoneos_copilot_ro/RLS-protected tables —
+// see the Step 6A, inventory-ledger and opening-inventory migrations for
+// the full 39):
 // excludes raw_block_photo and
 // slab_photo (URL-only tables, no business content) and
 // block_state_transition / slab_state_transition (internal append-only
@@ -53,6 +54,20 @@ raw_block(id, factory_id, serial_number, variety_name, supplier_id, weight_tons,
   under-target yield, above is good efficiency. ALWAYS compute recovery ratio from
   sales_line_item.quantity (the real, sale-time measurement) — NEVER from slab.length_ft/width_ft,
   which are provisional production-stage estimates only (see slab table note below).
+
+opening_inventory_snapshot(id, factory_id, count_date, status, created_by, submitted_by,
+  submitted_at, approved_by, approved_at, rejected_by, rejected_at, rejection_reason,
+  created_at, updated_at)
+  — The factory's opening stock count: what was standing in the yard when the books
+  started. status is DRAFT | SUBMITTED | APPROVED | REJECTED; at most one APPROVED row
+  per factory, and approving it is what sets factory.operating_status = 'LIVE'.
+
+opening_inventory_line(id, snapshot_id, inventory_kind, raw_block_id, slab_id, area_sqft,
+  opening_value, location_id, ownership_type, verification_status, notes, created_at)
+  — One counted item. Exactly one of raw_block_id / slab_id is set. inventory_kind is
+  RAW_BLOCK | UNPOLISHED_SLAB | POLISHED_SLAB. ownership_type OWNED | CUSTOMER_OWNED —
+  CUSTOMER_OWNED stock is physically present but NOT the factory's, so exclude it when
+  valuing inventory. verification_status PHYSICALLY_COUNTED | ESTIMATED.
 
 inventory_location(id, factory_id, code, name, location_type, active, created_at)
   — The physical places stock sits. code is a stable identifier: RAW_YARD, B21_QUEUE,
@@ -111,7 +126,10 @@ vehicle(id, factory_id, name, vehicle_type, purchase_date, retired_date, active,
 
 slab(id, factory_id, parent_block_id, cutting_session_id, slab_serial, variety_name,
   thickness_mm, length_ft, width_ft, finish, quality_note, current_location,
-  sales_status, created_at, is_backfilled)
+  sales_status, location_id, created_at, is_backfilled)
+  — parent_block_id is NULLABLE: slabs counted in the opening inventory predate this
+  system and have no known parent block. Join to raw_block with a LEFT JOIN, never an
+  inner one, or opening stock silently disappears from the result.
   — length_ft/width_ft are PROVISIONAL ONLY (a rough ~85% estimate set once at cutting
   completion, for yard/WIP tracking) — NEVER the authoritative area or basis for recovery
   ratio; the true sqft figure is sales_line_item.quantity, measured once at sale. quality_note
