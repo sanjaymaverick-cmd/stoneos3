@@ -23,6 +23,15 @@ export class ProvisionUserController {
     // Always provisions into the CALLER's own factory — an owner can
     // never accidentally (or deliberately) grant access to a different
     // factory's data than their own.
-    return this.service.provision(user.factoryId, body.email, body.role);
+    //
+    // The caller's own role and email go through too: RolesGuard proves the
+    // caller is in the elevated tier, but only the service can tell whether
+    // granting or removing OWNERSHIP specifically is allowed.
+    return this.service.provision(
+      user.factoryId,
+      { role: user.role, email: user.email },
+      body.email,
+      body.role,
+    );
   }
 }
