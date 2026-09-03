@@ -5,40 +5,41 @@
 
 ## Current Status
 
-**Active step:** Step 6B — AI Copilot: Gemini integration + owner-only chat page — **BUILT,
-AWAITING REVIEW.** Second and final step of the AI Business Analyst / Copilot (README item #10);
-Step 6A (RLS + `stoneos_copilot_ro` read-only role, 35 tenant-scoped tables) merged ahead of this
-step per the Architect Brief. This step wires up the actual feature: `POST /copilot/ask`
-(owner-only) sends the question + a hand-built schema description to Gemini, gets back one SQL
-`SELECT`, validates it, executes it through the `stoneos_copilot_ro` role with
-`app.current_factory_id` scoped via `SET LOCAL` (through `set_config(..., true)`) inside an
-explicit transaction, sends the result back to Gemini for a plain-language answer, and logs every
-attempt (success or failure) to a new `CopilotQueryLog` table. A startup RLS-coverage assertion
-fails only the Copilot module's own readiness (never the whole app) if any of the 35 expected
-tables is missing RLS. Frontend: owner-only chat page at `/copilot` with an expandable "show
-query" per answer. No Gemini API key exists anywhere in this environment (confirmed before this
-step started) — the SQL validator, RLS-scoped execution path, readiness check, and full
-non-Gemini orchestration were all live-tested against real local Postgres; the two literal Gemini
-calls (`generateSql`/`formatAnswer`) are implemented against the real SDK but unverified
-end-to-end. See `handoff/ARCHITECT-BRIEF.md` for the full brief and `handoff/REVIEW-REQUEST.md`
-for full verification results.
+**Active step:** none. Nothing is mid-build and nothing is awaiting review.
 
-**Previously:** Step 6A (Copilot RLS + read-only role) merged ahead of this step. Steps 5A, 5B,
-5C, and 5D all cleared and merged 2026-07-12 (built in parallel in isolated worktrees, one per
-step). 5D merged last, per plan, after fixing a dual-React-copy dependency issue Richard's review
-surfaced; the fix was confirmed against a real Docker build on 2026-07-13.
-**Last cleared:** Step 6A — see its Step History entry below for full verification detail
-(11/11 checks passed against real local Postgres). Before that, Step 5D (Next.js 15.5.20 →
-16.2.10) — reviewed clean (0 Must Fix), one
-significant Should Fix escalated (dual React copies in the production build artifact from a
-`lucide-react` peer-range conflict blocking React 19's hoisting) fixed directly by the Architect
-via npm `overrides` in both the root and `packages/frontend` package.json files (the Docker
-build only ever sees the latter), verified via a simulated isolated install matching Docker's
-exact build context. Merged to `main`, verified with a full `tsc --noEmit` + `npm run build`
-pass in both packages after merging. All four of this session's parallel steps (5A/5B/5C/5D) are
-now on `main`.
+**Last landed:** dependency security fixes (2026-09-03). `StoneOS Security` had been red on
+`main` since the hardening import — Trivy was exiting 1 on 11 fixable HIGH findings. The scan
+was reproduced locally with the same Trivy version and flags CI uses, all 11 cleared, and the
+scan re-run on a clean checkout (same four targets CI sees) to confirm exit 0. `next` bumped
+16.2.10 -> 16.2.11; `multer` (2.0.2 -> 2.3.0), `postcss` (8.4.31 nested under `next` ->
+deduped onto 8.5.26) and `sharp` (0.34.5 -> 0.35.4) lifted via npm `overrides`, since the
+packages that pin them are not ours to change. Full CI sequence re-run locally on Node 24 —
+`npm ci`, prisma validate/generate, 347 backend tests, backend build, frontend typecheck,
+10 frontend route-policy tests, frontend production build. All green. `prisma migrate deploy`
+and the two image builds were NOT run locally (no Docker in that environment) — CI covers them,
+and the change touches no migration or Dockerfile.
+
+**Before that:** the ston3gpt hardening import (PR #1, merged 2026-09-02) — the inventory
+ledger, the guided opening inventory count, role-based access on every endpoint, service-level
+test coverage, the CI and security workflows, health probes and HTTP hardening, non-root
+containers, a production-viable bootstrap, the Remotion video workspace, and the design system
+doc. See CHANGELOG.md for the itemised list.
+
+**Before that:** Steps 6A and 6B (the AI Copilot) merged 2026-07-13, then two follow-up fixes
+on 2026-07-15 (two Copilot RLS gaps found in code review; LPM runs split into Grinding and
+Polishing stages; an app-wide UI/UX pass).
+
+**Known red / open:**
+- **Gemini quota.** The Copilot has never been run end to end against the live API — the
+  account has no free-tier `generateContent` quota provisioned. Account-side, not a code fix.
+- **Stale dependabot PRs.** #2, #6 and #8 are all branched off `f81bea8`, i.e. *before* the
+  hardening import, so merging any of them would revert PR #1. Their CI fails at `npm ci` for
+  the same reason. The upgrades they propose are carried on `main` instead.
+- **KG-8** (stuck migration blocking `tally_voucher_item`) — pre-existing, unchanged.
+
 **Repo:** `origin` is `https://github.com/sanjaymaverick-cmd/stoneos3.git`. There is no CD
-pipeline — pushes trigger nothing.
+pipeline — pushes trigger CI and the security scan, nothing else.
+
 **Bootstrap:** Run 2026-07-11 (`prisma/bootstrap.ts`, local Postgres) — `sanjay.maverick@gmail.com`
 granted owner access to the existing "Vedam Granites" factory (`4485c4f7-...`), B-21/LPM
 machines seeded. Fixed `bootstrap.ts` first to reuse an existing factory by name instead of
@@ -46,7 +47,9 @@ unconditionally creating one — the factory row already existed (from Step 1's 
 2,421 Expense/514 DailySalesSummary rows linked to it, and running the script unmodified would
 have created a duplicate factory and orphaned that data from the owner grant. Verified directly
 against Postgres (not just script output): 1 factory, 2 machines, 1 app_user row, all correctly
-linked.
+linked. The bootstrap was reworked again on 2026-09-02 to be production-viable — see the
+README's "Setting up a database" section for the current three-command sequence.
+
 **Hosting:** None. No hosted environment exists for this project, and standing one up is
 unscoped — all cloud infrastructure config was removed from the repo on 2026-09-02 (see
 CHANGELOG). Historical-backfill execution against any future real environment is the Owner's

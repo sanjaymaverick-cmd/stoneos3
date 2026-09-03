@@ -1,7 +1,97 @@
-# Session Checkpoint — 2026-07-13
+# Session Checkpoint — 2026-09-03
 *Read this before reading anything else. If it covers current state, skip BUILD-LOG.*
 
 ---
+
+## Where We Stopped
+
+**Nothing is mid-build.** No step is active, nothing is awaiting review, and the working tree
+is clean. `main` is green on `StoneOS CI` and, as of 2026-09-03, on `StoneOS Security` too.
+
+**Last thing done (2026-09-03): cleared the red security scan, refreshed these docs, and dealt
+with the stale dependabot PRs.**
+
+Trivy had been failing `StoneOS Security` on every push to `main` since the hardening import,
+on 11 fixable HIGH findings. The scan was reproduced locally at the same Trivy version and
+flags CI uses rather than reasoning from the SARIF summary — the CI log does not name the
+findings, because the SARIF format sends them to the Security tab instead of stdout. All 11
+cleared:
+
+- `next` 16.2.10 -> 16.2.11 (authentication bypass, two SSRFs, a DoS). Direct dependency.
+- `multer` 2.0.2 -> 2.3.0 (four multipart DoS CVEs). **Reachable, not theoretical** — the
+  Tally XML import takes uploads through `FileInterceptor`.
+- `postcss` 8.4.31 -> 8.5.26 (path traversal in source-map auto-loading). Was a nested copy
+  under `next`, which pins it exactly; the override deduped it onto the existing root copy.
+- `sharp` 0.34.5 -> 0.35.4 (four inherited libvips CVEs).
+
+Only `next` could be fixed by bumping a dependency we declare. The other three are pinned by
+packages we do not control, so they are lifted with npm `overrides` — declared in the root
+`package.json` *and* in each workspace's own `package.json`, because both Dockerfiles copy only
+their workspace `package.json` and run `npm install`, so the images never see the root
+overrides. This is the same reasoning as the pre-existing React overrides, and the reason the
+`allowScripts` entry had to move from `sharp@0.34.5` to `sharp@0.35.4` — that field is keyed by
+exact version.
+
+**The one thing that got missed on the first push, and it is worth internalising:** an npm
+override cannot disagree with a direct dependency's own range. `postcss` is a direct
+devDependency of `packages/frontend`, so overriding it there to a different range fails the
+install with `EOVERRIDE` — but *only in the image build*, because the root project declares no
+`postcss` and a root `npm ci` therefore passes clean. It surfaced in the `production-images` job,
+which was exactly the check called out as unverifiable locally (no Docker in that environment).
+Fixed by raising the declared range and writing the override as `"postcss": "$postcss"`. The
+lesson for next time: a workspace override has to be tested the way the image builds it — that
+workspace's `package.json` alone in an empty directory, then `npm install` — because a green
+root install says nothing about the images. That simulation is cheap and needs no Docker.
+
+Verified rather than assumed: the whole CI sequence was re-run locally on Node 24 (`npm ci`,
+prisma validate/generate, 347 backend tests, backend build, frontend typecheck, 10 frontend
+route-policy tests, frontend production build), and the Trivy scan was re-run against a clean
+`git archive` checkout — the same four targets CI scans, no local build output — to confirm
+exit 0. Two things could NOT be checked locally, both for lack of Docker in that environment:
+`prisma migrate deploy` and the two production image builds. Neither is touched by this change
+beyond dependency versions, and CI runs both.
+
+**The dependabot PRs (#2, #6, #8) were closed, not merged, and this is the important part:**
+all three are branched off `f81bea8` — the commit *before* the hardening import merged. Merging
+any of them would have reverted PR #1 wholesale (127 files). Their own CI failure at `npm ci`
+is a symptom of the same staleness. Everything they proposed that Trivy flags as HIGH is
+carried on `main` instead. `qs` and `brace-expansion`, the other packages those PRs touched,
+are moderate/low and not gating anything.
+
+**Docs refreshed in the same pass** — they had drifted about six weeks behind the code. The
+README's "what's built" table had no rows for the inventory ledger, the opening inventory count,
+access control, the health probes or the video workspace, and its item #10 still claimed the AI
+Copilot "hasn't been started yet" when it shipped in July. CHANGELOG.md had no entry for the
+hardening import at all. This file and BUILD-LOG.md both still described Step 6B as awaiting
+review.
+
+**Next action:** nothing is queued. The two things that would move the project forward, in
+order: (1) get the Gemini quota provisioned and do the first real end-to-end `/copilot/ask` run
+— that is the last unproven part of the Copilot and it is an account-side fix, not a code
+change; (2) decide whether hosting is back in scope, which is currently unscoped work with no
+host, database, secrets store, TLS or CD pipeline in existence.
+
+---
+
+## Still Open
+
+- **Live end-to-end test of `/copilot/ask`** — blocked on the Gemini account's free-tier quota
+  provisioning (Owner's own step, on Google's side). Everything else in the Copilot is built,
+  reviewed and independently verified. The API key is in `packages/backend/.env` (gitignored)
+  and **should be rotated** — it was pasted into a chat conversation and is sitting in that
+  history.
+- **Hosting** — no environment exists at all and standing one up is unscoped. All cloud
+  infrastructure config was removed from the repo on 2026-09-02.
+- **KG-8** (stuck migration blocking `tally_voucher_item`) — pre-existing, unchanged. Step 6B's
+  startup RLS-coverage assertion mitigates its downstream risk; it does not fix KG-8.
+- **`npm audit`** still reports 7 moderate / 2 low in production dependencies (`qs`, `webpack`
+  via the Remotion tree). CI runs the audit `continue-on-error` on purpose; nothing here is
+  HIGH, so nothing is gating. Worth a pass when the Nest 10 tree gets upgraded.
+
+---
+
+<details>
+<summary>Prior session — 2026-07-13, Copilot direction + Steps 6A/6B build, collapsed for length</summary>
 
 ## Where We Stopped
 
@@ -127,6 +217,9 @@ compared, not just trusting push output). There is no CD pipeline — pushes tri
 - KG-8 (stuck migration blocking `tally_voucher_item`) — pre-existing, unrelated to Copilot work,
   not scheduled to be resolved as part of this feature; Step 6B's startup RLS-coverage assertion
   is a mitigation for its downstream risk, not a fix for KG-8 itself.
+
+
+</details>
 
 ---
 

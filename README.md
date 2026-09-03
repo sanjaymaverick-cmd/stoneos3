@@ -60,6 +60,8 @@ environment (host, database, secrets, TLS, CI/CD) is unscoped work.
 | Module | Status |
 |---|---|
 | Inventory (raw blocks, slabs) | Built — append-only state transitions enforced at the service layer |
+| Inventory ledger | Built — every block/slab movement is appended to `inventory_movement` with a caller-supplied idempotency key, so a retried request returns the original row instead of double-posting. The rules are CHECK constraints in the migration, not only service-layer checks. `GET/POST /inventory/movements`, `GET /inventory/locations` |
+| Opening inventory count | Built — `/setup/opening-inventory` walks a factory through its first physical count (blocks, then slabs, with slabs allowed to have no parent block since pre-system slabs have no cutting session to point at). Posts through the ledger like everything else |
 | Production — block-centric (CORRECTED) | Built — CuttingSession (block on B-21, can span days) + CuttingDayLog (per operational day, 7am–7am boundary) + PolishingSession (LPM glossy/leather runs against specific slabs). Block/slab state transitions happen atomically with session events. DPR daily aggregates are now DERIVED from sessions, not entered directly |
 | Machines (B-21/LPM) | Built — `GET/POST /machines`, real dropdown in the production page (was a pasted UUID before). B-21 carries bladeCount (21), LPM carries headCount (16) + abrasivesPerHead (6) — used for consumables forecasting, not just labeling. Seed script: `prisma/seed-machines.ts` |
 | Slab registration (SIMPLIFIED) | Built — supervisor enters TWO numbers at session completion: totalSlabsCut + finalGoodSlabCount (after inspection), not one tap per physical slab. App bulk-generates serials `{blockSerial}/{totalSlabsCut}/{sequence}` for the good ones only (e.g. V101/50/01..V101/50/47 for 47 good out of 50 cut). Damaged slabs (the difference) never become Slab/inventory rows — tracked only as damagedSlabCount on the session. Dimensions entered ONCE per session (99% of slabs from one block are identical size), applied to all generated slabs. expectedSlabCount at allocation is now optional (planning estimate only) |
@@ -73,6 +75,10 @@ environment (host, database, secrets, TLS, CI/CD) is unscoped work.
 | Frontend Expenses page | Built — `/expenses`: add-expense form with category-driven vehicle field, quick-add vehicle, recent expenses list |
 | Shared design system | `app/globals.css` — extracted from the DPR artifact so every page matches without re-declaring styles; `components/AppNav.tsx` links Dashboard/Production/Sales/Expenses |
 | Dashboard | Built for owner/admin — `/dashboard` shows 5 real widgets (30-day sales/expense summary, active cutting sessions, raw block stock snapshot, recent activity), role-gated via `useRole()`, verified live in a browser. Every other role sees a placeholder; role-based views for accountant/manager/supervisor/operator/auditor are OUT OF SCOPE for this version (Owner's call, no plan to build them) |
+| AI Copilot | Built — owner-only `/copilot` chat page over `POST /copilot/ask`. Gemini writes the SQL, a validator rejects anything that is not a single read-only `SELECT`/CTE, and it executes through the `stoneos_copilot_ro` role under RLS. Every attempt is logged to `copilot_query_log`. **Never live-tested end to end** — the Gemini account has no free-tier quota provisioned (see the checkpoint) |
+| Access control | Built — `RolesGuard` on every endpoint, a shared route policy the nav and `RouteAccessGuard` both read from (so the client never offers a link the server would refuse), and granting/removing ownership restricted to owners |
+| Operability | Built — `/health` liveness and `/health/ready` readiness probes, CORS allow-list, HTTP security headers, and both images running as the unprivileged `node` user |
+| Marketing/manual video | Built — `packages/video`, a Remotion workspace rendering the product manual and partner marketing videos (`npm run video:*`) |
 
 ## Setting up a database
 
@@ -140,8 +146,14 @@ the codebase — if you add one, you've broken tenant isolation.
    (`packages/backend/prisma/backfill-historical.ts`). Running it against any real database is
    OUT OF SCOPE for the team — Owner does that manually himself.
 
-**The bigger one, once the above is live:**
-10. The AI Business Analyst / Copilot itself — the actual reason StoneOS exists, per the original spec. Everything so far has been the foundation (clean structured data, traceability, the semantic layer it needs to reason over). This hasn't been started yet, and it's the natural next phase once real data is flowing daily rather than sitting in our working files.
+**The bigger one:**
+10. ~~The AI Business Analyst / Copilot itself~~ — BUILT (Steps 6A + 6B), not yet proven against
+    a live LLM. Step 6A is the safety foundation: Row-Level Security on 35 tenant-scoped tables plus
+    a `stoneos_copilot_ro` role that owns nothing, so a query that forgets to filter by factory returns
+    zero rows rather than another tenant's data. Step 6B is the feature: `POST /copilot/ask`, SQL
+    validation, RLS-scoped execution, audit logging, and the owner-only `/copilot` page. The one thing
+    still outstanding is a real end-to-end run through Gemini — blocked on that account having no
+    free-tier `generateContent` quota provisioned, which is an account-side fix, not a code change.
 
 ## API reference — Sales & Expenses
 
