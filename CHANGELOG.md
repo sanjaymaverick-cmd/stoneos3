@@ -2,6 +2,50 @@
 
 High-level record of significant changes. Commit history has the detail.
 
+## 2026-09-03 — Dependency security fixes
+
+Trivy had been failing the `StoneOS Security` workflow on `main` since the hardening
+import. Reproduced the exact scan locally and cleared all 11 fixable HIGH findings:
+
+| Package | Was | Now | Why |
+|---|---|---|---|
+| `next` | 16.2.10 | 16.2.11 | authentication bypass, two SSRFs, a DoS (CVE-2026-64641/64642/64645/64649) |
+| `multer` | 2.0.2 | 2.3.0 | four multipart DoS CVEs — reachable, the Tally XML import uploads through `FileInterceptor` |
+| `postcss` | 8.4.31 (nested under `next`) | 8.5.26 (deduped) | path traversal in source-map auto-loading, info disclosure |
+| `sharp` | 0.34.5 | 0.35.4 | four inherited libvips CVEs |
+
+Only `next` is a direct dependency. The other three are pinned by packages we do not
+control (`@nestjs/platform-express` 10.4.22 pins `multer` exactly; `next` pins `postcss`
+exactly and ranges `sharp` below the fix), so they are lifted with npm `overrides`.
+
+Those overrides are declared in **three** places on purpose: the root `package.json` drives
+the lockfile that CI and Trivy read, and each `Dockerfile` copies only its own workspace
+`package.json` and runs `npm install`, so an image would otherwise reinstall the vulnerable
+version. Same reasoning as the existing React overrides.
+
+Also: `allowScripts` is keyed by exact version, so `sharp@0.34.5` moved to `sharp@0.35.4`
+with the bump — otherwise the install-script policy stops matching.
+
+## 2026-09-02 — Hardening import (PR #1)
+
+Imported the hardening work from the ston3gpt build. The largest single change since the
+Copilot:
+
+- **Inventory ledger** — `inventory_movement`, append-only, idempotency-keyed, with the
+  rules enforced as CHECK constraints in the migration rather than only in the service.
+- **Opening inventory count** — guided first-count flow at `/setup/opening-inventory`,
+  including slabs with no parent block (pre-system slabs have no cutting session).
+- **Role-based access across all endpoints** — plus a shared route policy the nav and the
+  client-side guard both read, and owner-only granting/removing of ownership.
+- **Service-level test coverage** — 347 tests across 14 suites.
+- **CI and security workflows** — `StoneOS CI` (Postgres service, migrations, tests, both
+  builds, both production images) and `StoneOS Security` (CodeQL, Trivy, SBOM). Node 24
+  everywhere.
+- **Health probes and HTTP hardening**, containers running as non-root.
+- **Production-viable bootstrap** — see the README's database setup section.
+- **`packages/video`** — Remotion workspace for the product manual and marketing videos.
+- **`design-system/stoneos/MASTER.md`** — the design system documented as implemented.
+
 ## 2026-09-02 — Deployment removed
 
 The project is no longer hosted anywhere. Torn down and deleted from the repo:
