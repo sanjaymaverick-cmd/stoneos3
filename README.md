@@ -5,9 +5,10 @@
 Modular monolith. NestJS backend + Next.js frontend, PostgreSQL via Prisma,
 Clerk for auth. **Runs locally only** — there is no hosted environment.
 
-> No production deployment exists. The AWS infrastructure this project
-> previously ran on has been torn down and its config removed from the repo.
-> Container images still build (see the Dockerfiles), but nothing is hosted.
+> Deployment target: a single Oracle Cloud Always Free Ampere instance
+> running the whole stack — Caddy, both app containers, and PostgreSQL. See
+> `deploy/oci/README.md` for the runbook. Nothing is hosted *yet*; the
+> configuration is in the repo and the provisioning is a manual step.
 
 ## Structure
 
@@ -43,17 +44,29 @@ and `/sign-up`; a client-side `AuthGate` redirects unauthenticated users.
 
 ## Deployment
 
-**None.** There is no hosted environment — the app runs locally only.
+**Target: one Oracle Cloud Always Free Ampere (aarch64) instance**, running
+Caddy, both app containers and PostgreSQL. Everything needed is in
+`deploy/oci/` — compose file, Caddyfile, backup and restore scripts, systemd
+units, and a step-by-step runbook in `deploy/oci/README.md`.
 
-Both packages still carry multi-stage production `Dockerfile`s, so the
-release images can be built and smoke-tested locally:
+Images are built on the box rather than pulled from a registry, so there is no
+cross-architecture build to get wrong. Note that `schema.prisma` carries
+`linux-musl-arm64-openssl-3.0.x` for this reason — without it the backend
+starts and then dies on its first query.
+
+**The database runs on that same instance.** That is a deliberate choice and
+it has a cost: this is a factory's real books on reclaimable free-tier
+storage that nobody else backs up. `deploy/oci/backup.sh` is therefore load-
+bearing — a nightly verified `pg_dump` pushed off the box to Object Storage,
+which fails loudly rather than silently. Rehearse `restore.sh` before you need
+it. The exposure that remains is up to 24 hours of entries between dumps; see
+the runbook's backup section for how to narrow it.
+
+To exercise the release images locally instead, without any of the above:
 
 ```bash
 docker compose -f docker-compose.prod.yml up --build
 ```
-
-That is an image sanity check, not a deployment. Standing up a real
-environment (host, database, secrets, TLS, CI/CD) is unscoped work.
 
 ## What's built vs. stubbed
 
@@ -138,10 +151,10 @@ the codebase — if you add one, you've broken tenant isolation.
 **Deployment — REMOVED, no longer in scope:**
 7. ~~Dockerfile~~ — DONE, both backend and frontend, multi-stage production builds. Kept: the
    images still build and can be smoke-tested locally via `docker-compose.prod.yml`.
-8. **Hosting — none.** The project previously ran on AWS; that environment has been torn down
-   and all of its config (`deploy/`, `AWS-DEPLOYMENT.md`, the deploy workflow) removed from the
-   repo. Standing up a new environment is unscoped — no host, database, secrets store, TLS, or
-   CD pipeline exists.
+8. **Hosting — configured, not yet stood up.** Target is a single Oracle Cloud Always Free
+   Ampere instance running the whole stack including PostgreSQL; see `deploy/oci/`. The AWS
+   environment this previously ran on was torn down and its config removed. Still manual: there
+   is no CD pipeline, so deploying is `git pull` + `docker compose build` + `up -d` on the box.
 9. ~~Backfill the historical data~~ — script built and confirmed against local Postgres
    (`packages/backend/prisma/backfill-historical.ts`). Running it against any real database is
    OUT OF SCOPE for the team — Owner does that manually himself.

@@ -5,9 +5,23 @@
 
 ## Current Status
 
-**Active step:** none. Nothing is mid-build and nothing is awaiting review.
+**Active step:** Oracle Cloud deployment — configuration written, **not yet
+provisioned**. Everything the box needs is in `deploy/oci/`; standing the
+instance up is the Owner's step (it needs their tenancy, their domain, and
+production Clerk keys). See `deploy/oci/README.md`.
 
-**Last landed:** dependency security fixes (2026-09-03). `StoneOS Security` had been red on
+**Hosting decision (Owner's call, 2026-09-03):** everything on one Oracle Cloud
+Always Free Ampere instance, database included. The recommendation put to the
+Owner was to split it — free compute for the app, managed Postgres for the data,
+on the grounds that a factory's books should not be the thing sitting on
+reclaimable free-tier storage. The Owner chose one box for everything. Recorded
+here because it is a live risk, not a settled one: the mitigation is
+`deploy/oci/backup.sh`, and the residual exposure is up to 24 hours of entries
+between nightly dumps. Moving to managed Postgres later needs no code change —
+RLS is ENABLEd rather than FORCEd so the app never needs BYPASSRLS or superuser.
+
+**Before that:** dependency security fixes (2026-09-03), merged as PR #9 —
+`main` is green on both workflows for the first time since the hardening import. `StoneOS Security` had been red on
 `main` since the hardening import — Trivy was exiting 1 on 11 fixable HIGH findings. The scan
 was reproduced locally with the same Trivy version and flags CI uses, all 11 cleared, and the
 scan re-run on a clean checkout (same four targets CI sees) to confirm exit 0. `next` bumped

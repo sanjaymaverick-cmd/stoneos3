@@ -1,0 +1,13 @@
+[Unit]
+Description=Run the StoneOS database backup nightly
+
+[Timer]
+# 02:30 UTC = 08:00 IST, after the 7am-7am production day has closed.
+OnCalendar=*-*-* 02:30:00
+# If the box was off at 02:30, run on the next boot rather than skipping.
+Persistent=true
+# Avoid every instance in the world hitting object storage on the same second.
+RandomizedDelaySec=5m
+
+[Install]
+WantedBy=timers.target

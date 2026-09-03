@@ -2,6 +2,42 @@
 
 High-level record of significant changes. Commit history has the detail.
 
+## 2026-09-03 — Oracle Cloud deployment configuration
+
+The project has a hosting target again: **one Oracle Cloud Always Free Ampere
+instance running the whole stack**, PostgreSQL included. Added under
+`deploy/oci/` — compose file, Caddyfile, backup/restore scripts, systemd timer,
+and a runbook. Nothing is provisioned yet; this is the configuration and the
+instructions, not a live environment.
+
+Shape: Caddy terminates TLS and serves one hostname, with `/api/*` path-stripped
+to the backend so browser calls are same-origin and CORS never comes into it.
+Postgres is **not** published to the host — Docker writes its own iptables rules
+ahead of the host firewall, so a published 5432 would be open to the internet
+regardless of what the firewall says. Images build on the box, which removes any
+cross-architecture build step.
+
+`schema.prisma` gains `linux-musl-arm64-openssl-3.0.x`. Ampere is aarch64, and
+without that engine the backend container starts cleanly and then dies on its
+first query. Verified the target resolves and downloads, rather than assuming.
+
+**On running the database on the same free instance:** this was an explicit
+choice, made knowing the alternative. It puts a real factory's production logs,
+sales orders and expense history on an instance the provider can reclaim, on
+storage with no managed backups. `deploy/oci/backup.sh` is what makes that
+survivable — a nightly `pg_dump` that verifies the archive is readable before
+trusting it, pushes it off the box to Object Storage through a pre-authenticated
+request, and exits non-zero if the upload fails rather than reporting success.
+Local retention is pruned on the box; remote retention belongs in an Object
+Storage lifecycle rule, so a compromised box cannot erase its own history.
+`restore.sh` restores into a scratch database by default and prints row counts,
+because a backup nobody has restored is a hypothesis. The residual exposure is
+up to 24 hours between dumps, documented plainly rather than glossed.
+
+Worth noting for later: moving the database to managed Postgres needs no code
+change. RLS is `ENABLE`d rather than `FORCE`d precisely so the app never needs
+`BYPASSRLS` or superuser.
+
 ## 2026-09-03 — Dependency security fixes
 
 Trivy had been failing the `StoneOS Security` workflow on `main` since the hardening

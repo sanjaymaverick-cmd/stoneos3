@@ -1,0 +1,27 @@
+# One hostname serves both halves of the app. The frontend's API calls are
+# therefore same-origin, which sidesteps CORS entirely.
+#
+# DOMAIN comes from the environment:
+#   stoneos.example.com  -> automatic Let's Encrypt TLS
+#   :80                  -> plain HTTP, for before DNS is pointed at the box
+
+{$DOMAIN} {
+	encode zstd gzip
+
+	# handle_path STRIPS the matched prefix, so /api/sales-orders arrives at
+	# the backend as /sales-orders. The backend has no global route prefix.
+	handle_path /api/* {
+		reverse_proxy backend:4000
+	}
+
+	handle {
+		reverse_proxy frontend:3000
+	}
+
+	log {
+		output file /data/access.log {
+			roll_size 10MiB
+			roll_keep 5
+		}
+	}
+}

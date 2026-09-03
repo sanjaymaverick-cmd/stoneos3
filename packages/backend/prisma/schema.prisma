@@ -4,7 +4,12 @@
 
 generator client {
   provider      = "prisma-client-js"
-  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+  // linux-musl-*-openssl-3.0.x: the production image is node:24-alpine,
+  // which ships OpenSSL 3.x. Both architectures are listed because the
+  // images are built on whatever the host is — x86_64 in CI, aarch64 on
+  // the Ampere box. Drop the wrong one and the container starts fine and
+  // then dies on its first query.
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x", "linux-musl-arm64-openssl-3.0.x"]
 }
 
 datasource db {

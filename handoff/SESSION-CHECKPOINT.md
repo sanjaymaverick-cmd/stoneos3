@@ -5,8 +5,31 @@
 
 ## Where We Stopped
 
-**Nothing is mid-build.** No step is active, nothing is awaiting review, and the working tree
-is clean. `main` is green on `StoneOS CI` and, as of 2026-09-03, on `StoneOS Security` too.
+**`main` is green on both workflows** as of 2026-09-03 — the first time since the hardening
+import (PR #9, merged at `93662dc`).
+
+**Active work: Oracle Cloud deployment.** The configuration is written and pushed; the instance
+is not stood up. `deploy/oci/` has the compose file, Caddyfile, backup/restore scripts, systemd
+timer and a full runbook. Provisioning needs the Owner's tenancy, a domain, and production Clerk
+keys, so it is their step — the runbook is written to be followed start to finish.
+
+**The hosting decision, and why it is written down rather than assumed:** the Owner chose to run
+everything on one Always Free Ampere instance, database included. The recommendation put to them
+was to split it — free compute for the app, managed Postgres for the data — because this is a
+real factory's production logs, sales orders and expense history, and free-tier storage has no
+managed backups and can be reclaimed. The Owner made the call knowing that. So the backup path
+became load-bearing and was built accordingly rather than left as a follow-up:
+`deploy/oci/backup.sh` verifies each dump is a readable archive before trusting it, pushes it off
+the box to Object Storage via a pre-authenticated request, and exits non-zero if the upload fails
+instead of reporting success. `restore.sh` defaults to restoring into a scratch database and
+prints row counts, so the restore can be rehearsed without risking the live one. **Residual risk,
+stated plainly: up to 24 hours of entries between nightly dumps.** Narrowing it means an hourly
+timer or managed Postgres — the latter needs no code change, since RLS is ENABLEd rather than
+FORCEd specifically so the app never needs BYPASSRLS or superuser.
+
+One thing worth knowing before the first deploy: Ampere is aarch64, so `schema.prisma` now
+carries `linux-musl-arm64-openssl-3.0.x`. Without it the backend container starts cleanly and
+dies on its first query. The target was verified to resolve and download, not assumed.
 
 **Last thing done (2026-09-03): cleared the red security scan, refreshed these docs, and dealt
 with the stale dependabot PRs.**
