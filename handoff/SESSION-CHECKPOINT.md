@@ -32,6 +32,17 @@ overrides. This is the same reasoning as the pre-existing React overrides, and t
 `allowScripts` entry had to move from `sharp@0.34.5` to `sharp@0.35.4` — that field is keyed by
 exact version.
 
+**The one thing that got missed on the first push, and it is worth internalising:** an npm
+override cannot disagree with a direct dependency's own range. `postcss` is a direct
+devDependency of `packages/frontend`, so overriding it there to a different range fails the
+install with `EOVERRIDE` — but *only in the image build*, because the root project declares no
+`postcss` and a root `npm ci` therefore passes clean. It surfaced in the `production-images` job,
+which was exactly the check called out as unverifiable locally (no Docker in that environment).
+Fixed by raising the declared range and writing the override as `"postcss": "$postcss"`. The
+lesson for next time: a workspace override has to be tested the way the image builds it — that
+workspace's `package.json` alone in an empty directory, then `npm install` — because a green
+root install says nothing about the images. That simulation is cheap and needs no Docker.
+
 Verified rather than assumed: the whole CI sequence was re-run locally on Node 24 (`npm ci`,
 prisma validate/generate, 347 backend tests, backend build, frontend typecheck, 10 frontend
 route-policy tests, frontend production build), and the Trivy scan was re-run against a clean

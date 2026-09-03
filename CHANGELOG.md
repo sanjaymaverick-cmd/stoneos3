@@ -26,6 +26,19 @@ version. Same reasoning as the existing React overrides.
 Also: `allowScripts` is keyed by exact version, so `sharp@0.34.5` moved to `sharp@0.35.4`
 with the bump — otherwise the install-script policy stops matching.
 
+Two gotchas worth remembering, both found by CI rather than by reasoning:
+
+- **An override cannot disagree with a direct dependency.** `postcss` is a direct
+  devDependency of `packages/frontend`, so overriding it there to a different range fails
+  the install outright with `EOVERRIDE`. Only the image build hits this — the root project
+  declares no `postcss`, so a root-level `npm ci` passes and the problem stays invisible
+  until `docker build` runs `npm install` inside the workspace. The fix is to raise the
+  declared range and write the override as `"postcss": "$postcss"`, which points it at the
+  direct dependency's own spec and still forces `next`'s nested pin up.
+- **Verify a workspace override the way the image builds it**: that workspace's
+  `package.json` alone in an empty directory, then `npm install`. A green root install
+  proves nothing about the images.
+
 ## 2026-09-02 — Hardening import (PR #1)
 
 Imported the hardening work from the ston3gpt build. The largest single change since the
