@@ -1,0 +1,152 @@
+# StoneOS on an Oracle Cloud Always Free Ampere instance.
+#
+# One box runs everything: Caddy terminates TLS, the app containers sit behind
+# it, and PostgreSQL keeps its data on the attached block volume. Images are
+# built ON the box (`--build`) rather than pulled, which is why there is no
+# registry here and no cross-architecture build to get wrong — the box is
+# aarch64 and builds aarch64.
+#
+#   docker compose --env-file .env up -d --build
+#
+# Migrations and role provisioning are NOT part of `up`; they are one-shot
+# tasks behind the `tasks` profile. See README.md for the deploy sequence.
+
+name: stoneos
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB}
+    volumes:
+      # A bind mount onto the block volume, not a named volume: the whole
+      # point is that the data sits somewhere you can see, snapshot and back
+      # up without going through Docker.
+      - ${STONEOS_DATA_DIR:?set STONEOS_DATA_DIR}/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    # No `ports:` — deliberately. Publishing 5432 would expose the database to
+    # the internet even with the host firewall closed, because Docker writes
+    # its own iptables rules ahead of yours. Reach it with `docker compose
+    # exec postgres psql` or an SSH tunnel.
+
+  backend:
+    build:
+      context: ../../packages/backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
+      COPILOT_DATABASE_URL: ${COPILOT_DATABASE_URL:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      CLERK_SECRET_KEY: ${CLERK_SECRET_KEY:?set CLERK_SECRET_KEY}
+      # Same origin as the frontend — Caddy serves both under one hostname, so
+      # browser calls are same-origin and CORS never comes into it. This still
+      # needs to be right for any non-browser client.
+      FRONTEND_URL: ${PUBLIC_URL:?set PUBLIC_URL}
+      PORT: 4000
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      # /health/live is process-only. Readiness (/health) would fail the
+      # container whenever the database blinks, which is not what we want from
+      # a restart policy.
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:4000/health/live').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  frontend:
+    build:
+      context: ../../packages/frontend
+      args:
+        # NEXT_PUBLIC_* are baked in at build time and read by the BROWSER, so
+        # this must be the public URL, not a container name. /api is stripped
+        # by Caddy before the request reaches the backend.
+        NEXT_PUBLIC_API_URL: ${PUBLIC_URL}/api
+        NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:?set NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}
+    restart: unless-stopped
+    depends_on:
+      - backend
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      # A hostname (stoneos.example.com) gets automatic Let's Encrypt TLS.
+      # ":80" serves plain HTTP instead, for before DNS exists.
+      DOMAIN: ${DOMAIN:?set DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Certificates live here. Losing this directory means re-issuing, and
+      # Let's Encrypt rate-limits that — keep it on the block volume.
+      - ${STONEOS_DATA_DIR}/caddy/data:/data
+      - ${STONEOS_DATA_DIR}/caddy/config:/config
+    depends_on:
+      - frontend
+      - backend
+
+  # ---- one-shot tasks (profile: tasks) --------------------------------------
+  # These run against the builder stage, which still has devDependencies. The
+  # production backend image installs with --omit=dev, so it has neither the
+  # Prisma CLI nor ts-node and cannot run either of these itself.
+
+  migrate:
+    build:
+      context: ../../packages/backend
+      target: builder
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["npx", "prisma", "migrate", "deploy"]
+    restart: "no"
+    profiles: ["tasks"]
+
+  provision-roles:
+    build:
+      context: ../../packages/backend
+      target: builder
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      COPILOT_DB_PASSWORD: ${COPILOT_DB_PASSWORD:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["npx", "ts-node", "prisma/provision-db-roles.ts"]
+    restart: "no"
+    profiles: ["tasks"]
+
+  # First-owner bootstrap. Needs CLERK_SECRET_KEY as well as the database:
+  # it looks the owner up in Clerk by email and writes factoryId/role into
+  # their Clerk publicMetadata. Run it AFTER the app is up and after that
+  # person has signed up in the browser — it grants access to an existing
+  # Clerk account, it does not create one.
+  bootstrap:
+    build:
+      context: ../../packages/backend
+      target: builder
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      CLERK_SECRET_KEY: ${CLERK_SECRET_KEY:?set CLERK_SECRET_KEY}
+      OWNER_EMAIL: ${OWNER_EMAIL:?set OWNER_EMAIL to the email you signed up with}
+      FACTORY_NAME: ${FACTORY_NAME:-Vedam Granites}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["npx", "ts-node", "prisma/bootstrap.ts"]
+    restart: "no"
+    profiles: ["tasks"]

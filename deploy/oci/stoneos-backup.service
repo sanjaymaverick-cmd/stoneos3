@@ -1,0 +1,14 @@
+[Unit]
+Description=StoneOS database backup
+# Docker must be up; the script talks to the postgres container.
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+# Adjust if the repository lives elsewhere on the box.
+WorkingDirectory=/opt/stoneos/deploy/oci
+ExecStart=/opt/stoneos/deploy/oci/backup.sh
+# Output goes to the journal: `journalctl -u stoneos-backup`
+StandardOutput=journal
+StandardError=journal
