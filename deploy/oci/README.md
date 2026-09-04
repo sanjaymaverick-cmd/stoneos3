@@ -27,15 +27,33 @@ do not skip the restore rehearsal.
 
 Compute → Instances → Create.
 
-- **Shape:** `VM.Standard.A1.Flex`, 2 OCPU / 12 GB is ample (Always Free allows
-  4 OCPU / 24 GB total across all A1 instances). Ampere is **aarch64** — this
-  is why the Prisma schema carries `linux-musl-arm64-openssl-3.0.x`.
-- **Image:** Ubuntu 22.04 or Oracle Linux 9.
+- **Shape:** `VM.Standard.A1.Flex` with **4 OCPU / 24 GB** — the whole Always
+  Free Ampere allocation. Take all of it: it is per-tenancy, this is the only
+  instance, and unclaimed OCPUs are not banked for anything. The headroom is
+  not wasted either, because images are built on this box and the Next.js
+  production build is memory-hungry while Postgres is running beside it.
+  A1.Flex can be resized later, but that needs a stop/start.
+  Ampere is **aarch64** — this is why the Prisma schema carries
+  `linux-musl-arm64-openssl-3.0.x`.
+- **Image:** **Ubuntu 24.04 LTS (aarch64)**; 22.04 LTS is equally fine. Oracle
+  Linux 9 works too, but Docker's install path and most of the documentation
+  you will reach for mid-outage assume Ubuntu. The console filters images to
+  aarch64 once the shape is A1.Flex.
+- **Boot volume:** the 50 GB default. Keep the application data on the separate
+  block volume in step 2, so rebuilding the instance does not touch it. That is
+  100 GB of the 200 GB Always Free storage allowance, leaving headroom.
 - **Save the SSH private key** at creation. It is shown once.
 
 > **"Out of host capacity" is normal.** Ampere is heavily oversubscribed in
 > popular regions. Try another availability domain, then another region, then
 > try again later. It is a capacity queue, not a fault with your account.
+>
+> **The AMD `VM.Standard.E2.1.Micro` free shape is not a fallback.** At 1 GB
+> RAM it cannot build this app — the Next.js build will run out of memory, and
+> sharing that GB with Postgres would be worse. If Ampere stays unobtainable,
+> the honest options are to keep retrying or to upgrade the account to Pay As
+> You Go, which improves A1 capacity access while Always Free resources stay
+> free. Do not lose an evening trying to make the micro shape work.
 
 ## 2. Attach a block volume
 
