@@ -27,14 +27,14 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
+# The config file is OPTIONAL. In OCI Cloud Shell everything below can be
+# discovered, so `./find-capacity.sh` with no setup at all is a valid way to
+# run this. Provide find-capacity.env when you want to pin any of it.
 CONFIG="${1:-$SCRIPT_DIR/find-capacity.env}"
-[ -f "$CONFIG" ] || { echo "Config not found: $CONFIG (copy find-capacity.env.example)" >&2; exit 2; }
-# shellcheck disable=SC1090
-set -a; . "$CONFIG"; set +a
-
-: "${COMPARTMENT_ID:?set COMPARTMENT_ID}"
-: "${SUBNET_ID:?set SUBNET_ID}"
-: "${SSH_PUBLIC_KEY_FILE:?set SSH_PUBLIC_KEY_FILE}"
+if [ -f "$CONFIG" ]; then
+    # shellcheck disable=SC1090
+    set -a; . "$CONFIG"; set +a
+fi
 
 SHAPE="${SHAPE:-VM.Standard.A1.Flex}"
 OCPUS="${OCPUS:-4}"
@@ -61,7 +61,6 @@ notify() {
 }
 
 command -v oci >/dev/null || { echo "The oci CLI is not installed or not on PATH." >&2; exit 2; }
-[ -f "$SSH_PUBLIC_KEY_FILE" ] || { echo "SSH_PUBLIC_KEY_FILE not found: $SSH_PUBLIC_KEY_FILE" >&2; exit 2; }
 
 # ---- preflight -------------------------------------------------------------
 # Everything that can be wrong about the CONFIG is checked once, now, and is
@@ -70,6 +69,28 @@ command -v oci >/dev/null || { echo "The oci CLI is not installed or not on PATH
 
 log "Preflight: checking credentials and resolving inputs"
 
+# Cloud Shell exports OCI_TENANCY and is pre-authenticated as you, so the root
+# compartment is a sound default there. Elsewhere it has to be given.
+if [ -z "${COMPARTMENT_ID:-}" ]; then
+    COMPARTMENT_ID="${OCI_TENANCY:-}"
+    [ -n "$COMPARTMENT_ID" ] \
+        || { echo "COMPARTMENT_ID is not set and OCI_TENANCY is not available. Set it in find-capacity.env." >&2; exit 2; }
+    log "Compartment: using tenancy root from OCI_TENANCY"
+fi
+
+# A keypair is required to ever log in to the instance. Generating one is
+# better than failing, but the PRIVATE half is the thing you must keep — in
+# Cloud Shell, download it before the session goes away.
+if [ -z "${SSH_PUBLIC_KEY_FILE:-}" ]; then
+    SSH_PUBLIC_KEY_FILE="$HOME/.ssh/stoneos-a1.pub"
+    if [ ! -f "$SSH_PUBLIC_KEY_FILE" ]; then
+        log "No SSH key given; generating $HOME/.ssh/stoneos-a1"
+        mkdir -p "$HOME/.ssh" && chmod 700 "$HOME/.ssh"
+        ssh-keygen -t ed25519 -N "" -C "stoneos-a1" -f "$HOME/.ssh/stoneos-a1" >/dev/null
+        log "KEEP THIS: $HOME/.ssh/stoneos-a1 is the private key. Download it — you cannot log in without it."
+    fi
+fi
+
 ADS="$(oci iam availability-domain list --compartment-id "$COMPARTMENT_ID" \
         --query 'data[].name' --raw-output 2>/dev/null | tr -d '[]"' | tr ',' '\n' | sed '/^\s*$/d')" \
     || { echo "Could not list availability domains. Is 'oci setup config' done and the compartment OCID right?" >&2; exit 2; }
@@ -77,6 +98,17 @@ ADS="$(oci iam availability-domain list --compartment-id "$COMPARTMENT_ID" \
 AD_COUNT="$(echo "$ADS" | wc -l | tr -d ' ')"
 log "Availability domains ($AD_COUNT): $(echo "$ADS" | tr '\n' ' ')"
 [ "$AD_COUNT" = "1" ] && log "Single-AD region — nothing to rotate through, so this is a patient retry."
+
+# Any subnet that assigns public IPs will do. Picking the first one is right
+# for a tenancy with a single VCN; pin SUBNET_ID if you have several.
+if [ -z "${SUBNET_ID:-}" ]; then
+    log "Resolving a subnet"
+    SUBNET_ID="$(oci network subnet list --compartment-id "$COMPARTMENT_ID" \
+        --query 'data[0].id' --raw-output 2>/dev/null)" || SUBNET_ID=""
+    [ -n "$SUBNET_ID" ] && [ "$SUBNET_ID" != "null" ] \
+        || { echo "No subnet found. Create a VCN with a public subnet first, or set SUBNET_ID." >&2; exit 2; }
+fi
+log "Subnet: $SUBNET_ID"
 
 if [ -z "${IMAGE_ID:-}" ]; then
     log "Resolving newest $OS_NAME $OS_VERSION image for $SHAPE"
@@ -88,6 +120,8 @@ if [ -z "${IMAGE_ID:-}" ]; then
         || { echo "Could not resolve an image. Set IMAGE_ID explicitly." >&2; exit 2; }
 fi
 log "Image: $IMAGE_ID"
+[ -f "$SSH_PUBLIC_KEY_FILE" ] || { echo "SSH public key not found: $SSH_PUBLIC_KEY_FILE" >&2; exit 2; }
+log "SSH key: $SSH_PUBLIC_KEY_FILE"
 
 # ---- duplicate guard -------------------------------------------------------
 existing_a1() {

@@ -65,6 +65,28 @@ then exits. It does not check-then-launch, because Oracle exposes no dependable
 capacity API for Always Free A1 and because capacity can be taken by someone
 else between a check and a claim.
 
+**Fastest way to start — OCI Cloud Shell.** The console you are already
+signed into has a Cloud Shell (the `>_` icon, top right). Its `oci` CLI is
+already authenticated as you, so there are no API keys to set up and nothing
+to install. Paste this:
+
+```bash
+git clone https://github.com/sanjaymaverick-cmd/stoneos3.git
+cd stoneos3/deploy/oci && ./find-capacity.sh
+```
+
+With no config file it discovers the compartment from `OCI_TENANCY`, picks a
+subnet, resolves the newest Ubuntu 24.04 aarch64 image, and generates an SSH
+keypair if you have none. **If it generates one, download the private key
+(`~/.ssh/stoneos-a1`) before the Cloud Shell session ends — you cannot log
+into the instance without it.**
+
+The catch: Cloud Shell disconnects after roughly 20 minutes idle, so it is
+good for a burst of attempts, not an overnight hunt. For that, run it on the
+micro instance with the systemd unit below.
+
+To pin any of the inputs instead of discovering them:
+
 ```bash
 cp find-capacity.env.example find-capacity.env   # fill in the OCIDs
 ./find-capacity.sh
