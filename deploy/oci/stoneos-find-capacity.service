@@ -1,0 +1,23 @@
+[Unit]
+Description=Hunt for Oracle Cloud Ampere A1 capacity
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/stoneos/deploy/oci
+ExecStart=/opt/stoneos/deploy/oci/find-capacity.sh
+# on-abnormal restarts after a crash, an OOM or a reboot, but NOT after a
+# clean exit. That distinction matters: the script exits 0 when it has created
+# the instance and exits 1 on a fatal configuration error. Restarting on
+# either would be wrong — the first would try to build a second instance (the
+# duplicate guard would stop it, but pointlessly), the second would loop on a
+# problem only you can fix.
+Restart=on-abnormal
+RestartSec=60
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

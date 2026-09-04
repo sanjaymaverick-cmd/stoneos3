@@ -54,6 +54,49 @@ Compute → Instances → Create.
 > the honest options are to keep retrying or to upgrade the account to Pay As
 > You Go, which improves A1 capacity access while Always Free resources stay
 > free. Do not lose an evening trying to make the micro shape work.
+>
+> **Do the retrying with `find-capacity.sh` rather than by hand** — see below.
+> A micro instance is a perfectly good place to run it from.
+
+### Hunting for A1 capacity
+
+`find-capacity.sh` repeatedly attempts a real launch until one is accepted,
+then exits. It does not check-then-launch, because Oracle exposes no dependable
+capacity API for Always Free A1 and because capacity can be taken by someone
+else between a check and a claim.
+
+```bash
+cp find-capacity.env.example find-capacity.env   # fill in the OCIDs
+./find-capacity.sh
+```
+
+It validates every OCID and your credentials **once, up front, and treats those
+as fatal** — only capacity is retried. A typo'd compartment OCID stops it
+immediately rather than looping politely for a week.
+
+It refuses to create a second instance: every round it checks for an existing
+A1 in the compartment first, so a restart or a stray second copy cannot eat
+your free allocation.
+
+Set `NOTIFY_URL` to an [ntfy.sh](https://ntfy.sh) topic to get a phone alert.
+Capacity tends to free up at unsociable hours.
+
+To keep it running across reboots — ideally on the micro instance, which is
+free and otherwise idle:
+
+```bash
+sudo cp stoneos-find-capacity.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now stoneos-find-capacity
+journalctl -u stoneos-find-capacity -f
+```
+
+**In a single-AD region there is nothing to rotate through.** `ap-mumbai-1` has
+only AD-1, so "try another availability domain" is not advice you can act on
+there — it is simply a waiting game. The script never pins a fault domain,
+because Oracle's own capacity error says pinning one removes placements it
+could otherwise have used. If days pass with no success, Pay As You Go is the
+answer; Always Free resources remain free on it.
 
 ## 2. Attach a block volume
 
