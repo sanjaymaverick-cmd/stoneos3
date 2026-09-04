@@ -19,7 +19,9 @@ do not skip the restore rehearsal.
   without it there is no TLS. You can start without a domain (see step 6) but
   do not run real data over plain HTTP.
 - A Clerk **production** instance (`pk_live_` / `sk_live_`). The development
-  keys the project has used so far will not work on a real domain.
+  keys the project has used so far will not work on a real domain. You will
+  sign up through the deployed site partway through step 7 — the owner
+  bootstrap grants access to an existing Clerk account, it does not create one.
 
 ## 1. Create the instance
 
@@ -122,34 +124,50 @@ session tokens would cross the network in the clear.
 
 ## 7. First deploy
 
-Order matters: the schema has to exist before the app connects, and the
-Copilot's role has to be given a password before the Copilot can query.
+**Order matters, and not in the obvious way.** The schema must exist before
+the app connects — but the owner bootstrap has to come *last*, after the site
+is up, because it grants access to a Clerk account that must already exist. It
+looks you up in Clerk by email; it cannot create your account for you.
 
 ```bash
 docker compose --env-file .env build
 
-# Schema first. Postgres starts as a dependency and this waits for it.
+# 1. Schema. Postgres starts as a dependency and this waits for it to be healthy.
 docker compose --profile tasks run --rm migrate
 
-# Give stoneos_copilot_ro its login. Migrations create it deliberately
-# unusable (no password, no login) so no password is ever committed.
+# 2. Give stoneos_copilot_ro its login. Migrations create that role
+#    deliberately unusable (no password, no login) so no password is ever
+#    committed; this is the only thing that turns it on.
 docker compose --profile tasks run --rm provision-roles
 
-# Grant yourself owner access and seed the B-21/LPM machines.
-docker compose --profile tasks run --rm \
-  -e OWNER_EMAIL=you@example.com migrate npx ts-node prisma/bootstrap.ts
-
+# 3. Start the app.
 docker compose --env-file .env up -d
 docker compose ps
 ```
 
-Check it:
+Check the backend is alive and can see the database:
 
 ```bash
 curl -fsS https://your-domain/api/health   # {"status":"ok","database":"reachable"}
 ```
 
-Then open the site, sign in, and confirm the dashboard shows real data.
+**Now — before the last step — open the site in a browser and sign up**, using
+the email you want to own the factory. Sign-up is unrestricted; you just won't
+be able to see anything useful yet, because you have no role.
+
+```bash
+# 4. Grant that account owner access and seed the B-21/LPM machines.
+#    OWNER_EMAIL must match what you just signed up with.
+OWNER_EMAIL=you@example.com docker compose --profile tasks run --rm bootstrap
+```
+
+Sign out and back in so Clerk reissues your session with the new metadata, then
+confirm the dashboard loads.
+
+> `bootstrap` writes an `app_user` row unconditionally, so it is not safe to
+> re-run blindly for the same email — a second run will fail or duplicate.
+> Re-run it only for a genuinely new owner. It *is* safe about the factory
+> itself, reusing an existing one by name rather than creating a duplicate.
 
 ## 8. Backups — do this now, not later
 
@@ -243,3 +261,5 @@ is exactly why step 8 puts a copy of the data somewhere else.
 | Prisma dies on the first query | Wrong engine architecture — confirm `linux-musl-arm64-openssl-3.0.x` is in `schema.prisma` |
 | Copilot answers "cannot connect" | `provision-roles` not run, or `COPILOT_DATABASE_URL` disagrees with `COPILOT_DB_PASSWORD` |
 | Sign-in bounces | Development Clerk keys on a production domain, or `PUBLIC_URL` not matching the real address |
+| `bootstrap` says "No Clerk account found" | You have not signed up through the site yet, or `OWNER_EMAIL` does not match the address you used. Bootstrap grants access to an existing account; it cannot create one |
+| Signed in but the dashboard is empty | Bootstrap has not run, or you have not signed out and back in since it did — Clerk metadata is baked into the session |
