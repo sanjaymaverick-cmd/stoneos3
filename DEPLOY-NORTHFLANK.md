@@ -1,6 +1,59 @@
 # Deploying StoneOS to Northflank (free Sandbox tier)
 
-Status: project and database created. Services not built yet.
+## Live now
+
+| What | Where |
+|---|---|
+| Frontend | https://p01--stoneos-web--fpd9p2zcyzpc.code.run |
+| Backend | https://p01--stoneos-api--fpd9p2zcyzpc.code.run |
+| Health | `curl https://p01--stoneos-api--fpd9p2zcyzpc.code.run/health` → `{"status":"ok","database":"reachable"}` |
+
+Both services build from `sanjaymaverick-cmd/stoneos3`, branch `pwa-mobile`.
+Backend runs `nf-compute-20` (0.2 vCPU / 512 MB), frontend `nf-compute-10`
+(0.1 / 256 MB), Postgres 16 on `nf-compute-20` with 6 GB NVMe.
+
+## Three things still to do
+
+**1. Set the two secrets on `stoneos-api` → Environment.** Both currently read
+`REPLACE_ME`. Generate the session secret with:
+
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
+```
+
+- `SESSION_SECRET` — that value. Signing refuses anything under 32 characters,
+  so sign-in cannot succeed until this is real.
+- `GEMINI_API_KEY` — your Gemini key, for the Copilot.
+
+Use **Update & restart**, not Update only, or the running pod keeps the old values.
+
+**2. Run the migrations.** The database is empty, which is why `POST /auth/login`
+currently returns 500 — `app_user` does not exist yet. See Step 2 below.
+
+**3. Add a backup schedule** on the `stoneos-db` addon.
+
+### How DATABASE_URL reaches the backend
+
+A secret group, `stoneos-db-credentials`, links the `stoneos-db` addon and
+exposes `NF_STONEOS_DB_POSTGRES_URI_ADMIN`. The backend then maps it with an
+explicit runtime variable:
+
+```
+DATABASE_URL=${NF_STONEOS_DB_POSTGRES_URI_ADMIN}
+```
+
+The addon link also offers an *alias* feature that looks like it does the same
+thing. It did not reach the container — the service crash-looped on Prisma
+P1012 ("Environment variable not found: DATABASE_URL") until the explicit
+mapping above was added. Prefer the explicit reference.
+
+The **admin** URI is used deliberately, not the regular one. Migrations must
+`CREATE ROLE` for the Copilot, and more importantly the app has to OWN its
+tables: RLS is `ENABLE`d but not `FORCE`d, so Postgres exempts the owner. If
+the app connected as a non-owner it would pass every check and then read zero
+rows, silently.
+
+---
 
 Target shape, which is exactly what the Sandbox tier allows:
 
@@ -54,8 +107,8 @@ the cycle by **choosing both subdomains up front** rather than letting
 Northflank assign them, so each value is known before either build runs.
 
 ```
-frontend:  https://stoneos.<your-team>.code.run
-backend:   https://stoneos-api.<your-team>.code.run
+frontend:  https://p01--stoneos-web--fpd9p2zcyzpc.code.run
+backend:   https://p01--stoneos-api--fpd9p2zcyzpc.code.run
 ```
 
 ---
@@ -137,7 +190,7 @@ automatic migration step in the deployed image.
 | `COPILOT_DATABASE_URL` | same host/db, user `stoneos_copilot_ro`, password from Step 1 |
 | `SESSION_SECRET` | 🔒 the first secret from Step 1 |
 | `GEMINI_API_KEY` | 🔒 your Gemini key |
-| `FRONTEND_URL` | `https://stoneos.<your-team>.code.run` |
+| `FRONTEND_URL` | `https://p01--stoneos-web--fpd9p2zcyzpc.code.run` |
 | `PORT` | `4000` |
 | `SESSION_TTL_HOURS` | `12` (optional — how long a sign-in lasts) |
 
@@ -158,7 +211,7 @@ alongside it for local development.
 
 | Build arg | Value |
 |---|---|
-| `NEXT_PUBLIC_API_URL` | `https://stoneos-api.<your-team>.code.run` |
+| `NEXT_PUBLIC_API_URL` | `https://p01--stoneos-api--fpd9p2zcyzpc.code.run` |
 
 The frontend needs no secrets of its own — authentication is entirely a
 backend concern now.
@@ -166,7 +219,7 @@ backend concern now.
 ## Step 5 — Verify
 
 ```bash
-curl https://stoneos-api.<your-team>.code.run/health
+curl https://p01--stoneos-api--fpd9p2zcyzpc.code.run/health
 ```
 
 Expect `{"status":"ok","database":"reachable"}`. A 503 means the service is up
