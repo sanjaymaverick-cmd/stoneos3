@@ -175,19 +175,19 @@ export default function SalesPage() {
                 <input className="field-input" value={l.varietyName} onChange={(e) => updateLine(l.id, "varietyName", e.target.value)} placeholder="Kotra" />
               </label>
               <label className="field"><span className="field-label">Qty (sqft)</span>
-                <input className="field-input" value={l.quantity} onChange={(e) => updateLine(l.id, "quantity", e.target.value)} placeholder="0" />
+                <input className="field-input" inputMode="decimal" value={l.quantity} onChange={(e) => updateLine(l.id, "quantity", e.target.value)} placeholder="0" />
               </label>
               <label className="field"><span className="field-label">Unit Price</span>
-                <input className="field-input" value={l.unitPrice} onChange={(e) => updateLine(l.id, "unitPrice", e.target.value)} placeholder="0" />
+                <input className="field-input" inputMode="decimal" value={l.unitPrice} onChange={(e) => updateLine(l.id, "unitPrice", e.target.value)} placeholder="0" />
               </label>
               <label className="field"><span className="field-label">GST</span>
-                <input className="field-input" value={l.gstAmount} onChange={(e) => updateLine(l.id, "gstAmount", e.target.value)} placeholder="0" />
+                <input className="field-input" inputMode="decimal" value={l.gstAmount} onChange={(e) => updateLine(l.id, "gstAmount", e.target.value)} placeholder="0" />
               </label>
               <label className="field"><span className="field-label">Loading</span>
-                <input className="field-input" value={l.loadingCharge} onChange={(e) => updateLine(l.id, "loadingCharge", e.target.value)} placeholder="0" />
+                <input className="field-input" inputMode="decimal" value={l.loadingCharge} onChange={(e) => updateLine(l.id, "loadingCharge", e.target.value)} placeholder="0" />
               </label>
               <label className="field"><span className="field-label">Transport</span>
-                <input className="field-input" value={l.transportCharge} onChange={(e) => updateLine(l.id, "transportCharge", e.target.value)} placeholder="0" />
+                <input className="field-input" inputMode="decimal" value={l.transportCharge} onChange={(e) => updateLine(l.id, "transportCharge", e.target.value)} placeholder="0" />
               </label>
               <label className="field"><span className="field-label">Payment</span>
                 <select className="field-input" value={l.paymentType} onChange={(e) => updateLine(l.id, "paymentType", e.target.value)}>
@@ -199,10 +199,10 @@ export default function SalesPage() {
               {l.paymentType !== "invoiced" && (
                 <>
                   <label className="field"><span className="field-label">Invoiced Amt</span>
-                    <input className="field-input" value={l.invoicedAmount} onChange={(e) => updateLine(l.id, "invoicedAmount", e.target.value)} placeholder="0" />
+                    <input className="field-input" inputMode="decimal" value={l.invoicedAmount} onChange={(e) => updateLine(l.id, "invoicedAmount", e.target.value)} placeholder="0" />
                   </label>
                   <label className="field"><span className="field-label">Actual Received</span>
-                    <input className="field-input" value={l.actualAmountReceived} onChange={(e) => updateLine(l.id, "actualAmountReceived", e.target.value)} placeholder="0" />
+                    <input className="field-input" inputMode="decimal" value={l.actualAmountReceived} onChange={(e) => updateLine(l.id, "actualAmountReceived", e.target.value)} placeholder="0" />
                   </label>
                 </>
               )}

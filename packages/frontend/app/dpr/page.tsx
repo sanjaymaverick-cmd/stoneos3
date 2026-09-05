@@ -17,13 +17,33 @@ import { Ticket } from "../../components/Ticket";
 //   4. Record LPM polishing runs against specific slabs (glossy/leather)
 // Daily DPR aggregates are DERIVED from these — never entered directly.
 
+type SaveStatus = "idle" | "saving" | "saved" | "error";
+
 export default function ProductionPage() {
   const { getToken } = useAuth();
   const [blocks, setBlocks] = useState<any[]>([]);
   const [machines, setMachines] = useState<any[]>([]);
   const [sessions, setSessions] = useState<any[]>([]);
-  const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
-  const [errorMsg, setErrorMsg] = useState("");
+  // Keyed by which form is saving, not global. Previously one `status` and one
+  // `errorMsg` were shared by the allocate form and EVERY active session, so
+  // saving session A disabled session B's button and an error from A appeared
+  // to belong to B. Keys: "alloc", a session id for its day-log, and
+  // `complete:<id>` for its completion form.
+  const [status, setStatus] = useState<Record<string, SaveStatus>>({});
+  const [errorMsg, setErrorMsg] = useState<Record<string, string>>({});
+
+  const beginSave = (key: string) => {
+    setStatus((s) => ({ ...s, [key]: "saving" }));
+    setErrorMsg((e) => ({ ...e, [key]: "" }));
+  };
+  const finishSave = (key: string, resetAfterMs = 1500) => {
+    setStatus((s) => ({ ...s, [key]: "saved" }));
+    setTimeout(() => setStatus((s) => ({ ...s, [key]: "idle" })), resetAfterMs);
+  };
+  const failSave = (key: string, message: string) => {
+    setErrorMsg((e) => ({ ...e, [key]: message }));
+    setStatus((s) => ({ ...s, [key]: "error" }));
+  };
 
   const [allocBlockId, setAllocBlockId] = useState("");
   const [allocMachineId, setAllocMachineId] = useState("");
@@ -68,11 +88,10 @@ export default function ProductionPage() {
 
   const allocate = async () => {
     if (!allocBlockId || !allocMachineId) {
-      setErrorMsg("Pick a block and the B-21");
-      setStatus("error");
+      failSave("alloc", "Pick a block and the B-21");
       return;
     }
-    setStatus("saving"); setErrorMsg("");
+    beginSave("alloc");
     try {
       const token = await getToken();
       if (!token) throw new Error("not authenticated");
@@ -86,14 +105,13 @@ export default function ProductionPage() {
       });
       setAllocBlockId(""); setExpectedSlabCount("");
       await loadAll();
-      setStatus("saved");
-      setTimeout(() => setStatus("idle"), 1500);
-    } catch (e: any) { setErrorMsg(e.message); setStatus("error"); }
+      finishSave("alloc");
+    } catch (e: any) { failSave("alloc", e.message); }
   };
 
   const saveDayLog = async (sessionId: string) => {
     const log = dayLogs[sessionId] ?? {};
-    setStatus("saving"); setErrorMsg("");
+    beginSave(sessionId);
     try {
       const token = await getToken();
       if (!token) throw new Error("not authenticated");
@@ -111,9 +129,8 @@ export default function ProductionPage() {
         }),
       });
       await loadAll();
-      setStatus("saved");
-      setTimeout(() => setStatus("idle"), 1500);
-    } catch (e: any) { setErrorMsg(e.message); setStatus("error"); }
+      finishSave(sessionId);
+    } catch (e: any) { failSave(sessionId, e.message); }
   };
 
   const updateCompletion = (sessionId: string, field: string, val: string) =>
@@ -155,11 +172,10 @@ export default function ProductionPage() {
   const submitCompletion = async (sessionId: string) => {
     const f = completionForm[sessionId] ?? {};
     if (!f.totalSlabsCut || !f.finalGoodSlabCount) {
-      setErrorMsg("Enter both total slabs cut and final good count");
-      setStatus("error");
+      failSave(`complete:${sessionId}`, "Enter both total slabs cut and final good count");
       return;
     }
-    setStatus("saving"); setErrorMsg("");
+    beginSave(`complete:${sessionId}`);
     try {
       const token = await getToken();
       if (!token) throw new Error("not authenticated");
@@ -182,9 +198,8 @@ export default function ProductionPage() {
       setSlabOverridesEnabled((m) => ({ ...m, [sessionId]: false }));
       setSlabOverrideRows((rows) => ({ ...rows, [sessionId]: {} }));
       await loadAll();
-      setStatus("saved");
-      setTimeout(() => setStatus("idle"), 2500);
-    } catch (e: any) { setErrorMsg(e.message); setStatus("error"); }
+      finishSave(`complete:${sessionId}`, 2500);
+    } catch (e: any) { failSave(`complete:${sessionId}`, e.message); }
   };
 
   const updateLog = (sessionId: string, field: string, value: string) =>
@@ -222,12 +237,13 @@ export default function ProductionPage() {
           </label>
           <label className="field">
             <span className="field-label">Expected Slabs (optional)</span>
-            <input className="field-input" value={expectedSlabCount} onChange={(e) => setExpectedSlabCount(e.target.value)} placeholder="rough estimate, e.g. 50" />
+            <input className="field-input" inputMode="numeric" value={expectedSlabCount} onChange={(e) => setExpectedSlabCount(e.target.value)} placeholder="rough estimate, e.g. 50" />
           </label>
         </div>
+        {errorMsg.alloc && <div style={{ color: "var(--rust)", fontSize: 12.5, marginTop: 10 }}>{errorMsg.alloc}</div>}
         <div style={{ marginTop: 12, display: "flex", justifyContent: "flex-end" }}>
-          <button className="primary-btn" onClick={allocate} disabled={status === "saving"}>
-            <Play size={14} /> Start Cutting
+          <button className="mini-btn" onClick={allocate} disabled={status.alloc === "saving"}>
+            <Play size={14} /> {status.alloc === "saving" ? "Starting…" : "Start Cutting"}
           </button>
         </div>
       </Ticket>
@@ -253,13 +269,13 @@ export default function ProductionPage() {
               <input className="field-input" type="date" value={dayLogs[s.id]?.operationalDate ?? defaultOpDate()} onChange={(e) => updateLog(s.id, "operationalDate", e.target.value)} />
             </label>
             <label className="field"><span className="field-label">Runtime (hrs)</span>
-              <input className="field-input" value={dayLogs[s.id]?.runtimeHours ?? ""} onChange={(e) => updateLog(s.id, "runtimeHours", e.target.value)} placeholder="19-22" />
+              <input className="field-input" inputMode="decimal" value={dayLogs[s.id]?.runtimeHours ?? ""} onChange={(e) => updateLog(s.id, "runtimeHours", e.target.value)} placeholder="19-22" />
             </label>
             <label className="field"><span className="field-label">Power Cut (min)</span>
-              <input className="field-input" value={dayLogs[s.id]?.powerCutMinutes ?? ""} onChange={(e) => updateLog(s.id, "powerCutMinutes", e.target.value)} placeholder="0" />
+              <input className="field-input" inputMode="numeric" value={dayLogs[s.id]?.powerCutMinutes ?? ""} onChange={(e) => updateLog(s.id, "powerCutMinutes", e.target.value)} placeholder="0" />
             </label>
             <label className="field"><span className="field-label">Downtime (min)</span>
-              <input className="field-input" value={dayLogs[s.id]?.downtimeMinutes ?? ""} onChange={(e) => updateLog(s.id, "downtimeMinutes", e.target.value)} placeholder="0" />
+              <input className="field-input" inputMode="numeric" value={dayLogs[s.id]?.downtimeMinutes ?? ""} onChange={(e) => updateLog(s.id, "downtimeMinutes", e.target.value)} placeholder="0" />
             </label>
             <label className="field"><span className="field-label">Downtime Reason</span>
               <select className="field-input" value={dayLogs[s.id]?.downtimeReason ?? ""} onChange={(e) => updateLog(s.id, "downtimeReason", e.target.value)}>
@@ -271,19 +287,21 @@ export default function ProductionPage() {
               </select>
             </label>
             <label className="field"><span className="field-label">Power (kWh)</span>
-              <input className="field-input" value={dayLogs[s.id]?.powerConsumptionKwh ?? ""} onChange={(e) => updateLog(s.id, "powerConsumptionKwh", e.target.value)} placeholder="0" />
+              <input className="field-input" inputMode="decimal" value={dayLogs[s.id]?.powerConsumptionKwh ?? ""} onChange={(e) => updateLog(s.id, "powerConsumptionKwh", e.target.value)} placeholder="0" />
             </label>
             <label className="field"><span className="field-label">Slabs Today</span>
-              <input className="field-input" value={dayLogs[s.id]?.slabsProducedCount ?? ""} onChange={(e) => updateLog(s.id, "slabsProducedCount", e.target.value)} placeholder="0" />
+              <input className="field-input" inputMode="numeric" value={dayLogs[s.id]?.slabsProducedCount ?? ""} onChange={(e) => updateLog(s.id, "slabsProducedCount", e.target.value)} placeholder="0" />
             </label>
             <label className="field"><span className="field-label">Notes</span>
               <input className="field-input" value={dayLogs[s.id]?.notes ?? ""} onChange={(e) => updateLog(s.id, "notes", e.target.value)} placeholder="Optional" />
             </label>
           </div>
 
-          <div style={{ marginTop: 12, display: "flex", justifyContent: "flex-end" }}>
-            <button className="mini-btn" onClick={() => saveDayLog(s.id)} disabled={status === "saving"}>
-              {status === "saved" ? <Check size={13} /> : <Save size={13} />} Save Day Log
+          {errorMsg[s.id] && <div style={{ color: "var(--rust)", fontSize: 12.5, marginTop: 10 }}>{errorMsg[s.id]}</div>}
+          <div style={{ marginTop: 12 }}>
+            <button className="primary-btn" onClick={() => saveDayLog(s.id)} disabled={status[s.id] === "saving"}>
+              {status[s.id] === "saved" ? <Check size={15} /> : <Save size={15} />}
+              {status[s.id] === "saving" ? "Saving…" : status[s.id] === "saved" ? "Saved" : "Save Day Log"}
             </button>
           </div>
 
@@ -294,19 +312,19 @@ export default function ProductionPage() {
               </div>
               <div className="grid">
                 <label className="field"><span className="field-label">Total Slabs Cut</span>
-                  <input className="field-input" value={completionForm[s.id]?.totalSlabsCut ?? ""} onChange={(e) => updateCompletion(s.id, "totalSlabsCut", e.target.value)} placeholder="e.g. 50" />
+                  <input className="field-input" inputMode="numeric" value={completionForm[s.id]?.totalSlabsCut ?? ""} onChange={(e) => updateCompletion(s.id, "totalSlabsCut", e.target.value)} placeholder="e.g. 50" />
                 </label>
                 <label className="field"><span className="field-label">Final Good Slabs</span>
-                  <input className="field-input" value={completionForm[s.id]?.finalGoodSlabCount ?? ""} onChange={(e) => updateCompletion(s.id, "finalGoodSlabCount", e.target.value)} placeholder="e.g. 47" />
+                  <input className="field-input" inputMode="numeric" value={completionForm[s.id]?.finalGoodSlabCount ?? ""} onChange={(e) => updateCompletion(s.id, "finalGoodSlabCount", e.target.value)} placeholder="e.g. 47" />
                 </label>
                 <label className="field"><span className="field-label">Length (ft, rough estimate)</span>
-                  <input className="field-input" value={completionForm[s.id]?.lengthFt ?? ""} onChange={(e) => updateCompletion(s.id, "lengthFt", e.target.value)} placeholder="e.g. 9" />
+                  <input className="field-input" inputMode="decimal" value={completionForm[s.id]?.lengthFt ?? ""} onChange={(e) => updateCompletion(s.id, "lengthFt", e.target.value)} placeholder="e.g. 9" />
                 </label>
                 <label className="field"><span className="field-label">Width (ft, rough estimate)</span>
-                  <input className="field-input" value={completionForm[s.id]?.widthFt ?? ""} onChange={(e) => updateCompletion(s.id, "widthFt", e.target.value)} placeholder="e.g. 2.5" />
+                  <input className="field-input" inputMode="decimal" value={completionForm[s.id]?.widthFt ?? ""} onChange={(e) => updateCompletion(s.id, "widthFt", e.target.value)} placeholder="e.g. 2.5" />
                 </label>
                 <label className="field"><span className="field-label">Thickness (mm)</span>
-                  <input className="field-input" value={completionForm[s.id]?.thicknessMm ?? ""} onChange={(e) => updateCompletion(s.id, "thicknessMm", e.target.value)} placeholder="18" />
+                  <input className="field-input" inputMode="decimal" value={completionForm[s.id]?.thicknessMm ?? ""} onChange={(e) => updateCompletion(s.id, "thicknessMm", e.target.value)} placeholder="18" />
                 </label>
                 <label className="field"><span className="field-label">Wastage Notes</span>
                   <input className="field-input" value={completionForm[s.id]?.wastageNotes ?? ""} onChange={(e) => updateCompletion(s.id, "wastageNotes", e.target.value)} placeholder="Optional" />
@@ -372,9 +390,17 @@ export default function ProductionPage() {
                   </div>
                 );
               })()}
-              <div style={{ marginTop: 10, display: "flex", justifyContent: "flex-end" }}>
-                <button className="primary-btn" onClick={() => submitCompletion(s.id)} disabled={status === "saving"}>
-                  <Check size={14} /> Confirm Completion
+              {errorMsg[`complete:${s.id}`] && (
+                <div style={{ color: "var(--rust)", fontSize: 12.5, marginTop: 10 }}>{errorMsg[`complete:${s.id}`]}</div>
+              )}
+              <div style={{ marginTop: 10 }}>
+                <button
+                  className="primary-btn"
+                  onClick={() => submitCompletion(s.id)}
+                  disabled={status[`complete:${s.id}`] === "saving"}
+                >
+                  <Check size={14} />
+                  {status[`complete:${s.id}`] === "saving" ? "Completing…" : "Confirm Completion"}
                 </button>
               </div>
             </div>
@@ -408,7 +434,6 @@ export default function ProductionPage() {
         </div>
       )}
 
-      {errorMsg && <div style={{ color: "var(--rust)", fontSize: 12.5, marginTop: 10 }}>{errorMsg}</div>}
     </div>
   );
 }

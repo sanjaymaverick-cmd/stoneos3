@@ -160,13 +160,13 @@ export default function PolishingPage() {
             </label>
           )}
           <label className="field"><span className="field-label">Runtime (hrs)</span>
-            <input className="field-input" value={runtimeHours} onChange={(e) => setRuntimeHours(e.target.value)} placeholder="0" />
+            <input className="field-input" inputMode="decimal" value={runtimeHours} onChange={(e) => setRuntimeHours(e.target.value)} placeholder="0" />
           </label>
           <label className="field"><span className="field-label">Power (kWh)</span>
-            <input className="field-input" value={powerKwh} onChange={(e) => setPowerKwh(e.target.value)} placeholder="0" />
+            <input className="field-input" inputMode="decimal" value={powerKwh} onChange={(e) => setPowerKwh(e.target.value)} placeholder="0" />
           </label>
           <label className="field"><span className="field-label">Downtime (min)</span>
-            <input className="field-input" value={downtimeMinutes} onChange={(e) => setDowntimeMinutes(e.target.value)} placeholder="0" />
+            <input className="field-input" inputMode="numeric" value={downtimeMinutes} onChange={(e) => setDowntimeMinutes(e.target.value)} placeholder="0" />
           </label>
           <label className="field"><span className="field-label">Downtime Reason</span>
             <input className="field-input" value={downtimeReason} onChange={(e) => setDowntimeReason(e.target.value)} placeholder="Optional" />

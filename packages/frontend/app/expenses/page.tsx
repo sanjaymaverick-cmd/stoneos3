@@ -124,7 +124,7 @@ export default function ExpensesPage() {
           </label>
           <label className="field">
             <span className="field-label">Amount</span>
-            <input className="field-input" value={form.amount} onChange={(e) => setForm((f) => ({ ...f, amount: e.target.value }))} placeholder="0" />
+            <input className="field-input" inputMode="decimal" value={form.amount} onChange={(e) => setForm((f) => ({ ...f, amount: e.target.value }))} placeholder="0" />
           </label>
           <label className="field">
             <span className="field-label">Date</span>

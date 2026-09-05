@@ -26,5 +26,21 @@ export async function apiFetch(path: string, token: string, options: RequestInit
     const body = await res.text().catch(() => "");
     throw new Error(`API error ${res.status}: ${body}`);
   }
-  return res.json();
+
+  // An empty body is a legitimate success, not a failure. /setup/opening-
+  // inventory returns one when a factory has no opening count yet — which is
+  // every factory on its first day — and res.json() on it threw
+  // "Unexpected end of JSON input" straight onto the screen, so the first
+  // thing a new factory saw was a raw JavaScript error. Read as text and only
+  // parse when there is something to parse.
+  const text = await res.text();
+  if (!text) return null;
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    // A 2xx that is not JSON is a server bug, but the caller deserves a
+    // message naming the endpoint rather than a bare parser error.
+    throw new Error(`API returned a non-JSON body for ${path}`);
+  }
 }

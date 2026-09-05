@@ -12,26 +12,29 @@ Both services build from `sanjaymaverick-cmd/stoneos3`, branch `pwa-mobile`.
 Backend runs `nf-compute-20` (0.2 vCPU / 512 MB), frontend `nf-compute-10`
 (0.1 / 256 MB), Postgres 16 on `nf-compute-20` with 6 GB NVMe.
 
-## Three things still to do
+## Status
 
-**1. Set the two secrets on `stoneos-api` → Environment.** Both currently read
-`REPLACE_ME`. Generate the session secret with:
+Done: secrets set (`SESSION_SECRET` 43 chars, `GEMINI_API_KEY` present),
+all 11 migrations applied, factory and machines seeded, first owner created,
+backup schedule active.
 
-```bash
-node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
-```
+**Backups are WEEKLY, not daily** — Northflank rejects a daily interval with
+*"Backup schedule interval daily is not permitted on free accounts."* So the
+worst case is losing six days of production and sales entries. On-demand
+backups do work (`northflank backup addon --projectId stoneos --addonId
+stoneos-db --input '{"name":"..."}'`) — take one before anything risky. Daily
+backups are one of the concrete things a paid tier buys, alongside the Delhi
+region.
 
-- `SESSION_SECRET` — that value. Signing refuses anything under 32 characters,
-  so sign-in cannot succeed until this is real.
-- `GEMINI_API_KEY` — your Gemini key, for the Copilot.
+Note: schedules **cannot be edited after creation** except for retention time.
+Changing the cadence means deleting and recreating the schedule.
 
-Use **Update & restart**, not Update only, or the running pod keeps the old values.
+### Still outstanding
 
-~~**2. Run the migrations.**~~ Done — all 11 migrations applied, the factory
-and machines are seeded, and the first owner exists. `POST /auth/login` now
-returns a clean 401 for bad credentials instead of a 500.
-
-**3. Add a backup schedule** on the `stoneos-db` addon.
+- The Copilot database role (see below) — only `/copilot/ask` is affected.
+- Health checks are configured on neither service.
+- Test users from the QA run (`qatest-*`) are still active, including an
+  owner-privileged `qatest-owner2`. Revoke them via `/admin/users`.
 
 ### How DATABASE_URL reaches the backend
 
