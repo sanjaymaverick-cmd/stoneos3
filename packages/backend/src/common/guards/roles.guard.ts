@@ -2,8 +2,8 @@ import { CanActivate, ExecutionContext, Injectable, ForbiddenException } from "@
 import { Reflector } from "@nestjs/core";
 import { ROLES_KEY } from "../decorators/roles.decorator";
 
-// Always use AFTER ClerkAuthGuard in the @UseGuards() list — this reads
-// req.user, which ClerkAuthGuard is what attaches.
+// Always use AFTER SessionAuthGuard in the @UseGuards() list — this reads
+// req.user, which SessionAuthGuard is what attaches.
 @Injectable()
 export class RolesGuard implements CanActivate {
   constructor(private reflector: Reflector) {}

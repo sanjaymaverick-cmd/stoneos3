@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { ClerkProvider } from "@clerk/nextjs";
+import { SessionProvider } from "../lib/session";
 import { AuthGate } from "../components/AuthGate";
 import { RouteAccessGuard } from "../components/RouteAccessGuard";
 import { ServiceWorker } from "../components/ServiceWorker";
@@ -32,11 +32,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <body>
-        <ClerkProvider>
+        <SessionProvider>
           <AuthGate>
             <RouteAccessGuard>{children}</RouteAccessGuard>
           </AuthGate>
-        </ClerkProvider>
+        </SessionProvider>
         <ServiceWorker />
       </body>
     </html>

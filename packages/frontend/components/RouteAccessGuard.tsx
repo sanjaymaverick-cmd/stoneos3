@@ -1,7 +1,7 @@
 "use client";
 
 import { usePathname } from "next/navigation";
-import { useUser } from "@clerk/nextjs";
+import { useUser } from "../lib/session";
 import { canAccessRoute, isPublicPath } from "../lib/routePolicy";
 
 // Authorization only. AuthGate (which wraps this) owns authentication and the
@@ -14,7 +14,7 @@ export function RouteAccessGuard({ children }: { children: React.ReactNode }) {
 
   if (isPublicPath(pathname)) return <>{children}</>;
 
-  // Fail closed while Clerk is still resolving rather than flashing a page the
+  // Fail closed while the session is still resolving rather than flashing a page the
   // role may not be allowed to see.
   if (!isLoaded) {
     return (
@@ -27,7 +27,7 @@ export function RouteAccessGuard({ children }: { children: React.ReactNode }) {
   // AuthGate is mid-redirect; render nothing rather than an access error.
   if (!isSignedIn) return null;
 
-  const role = user?.publicMetadata?.role as string | undefined;
+  const role = user?.role;
   if (!canAccessRoute(role, pathname)) {
     return (
       <div className="app-shell">

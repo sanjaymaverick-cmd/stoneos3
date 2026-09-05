@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Param, Post, Query, UseGuards } from "@nestjs/common";
-import { ClerkAuthGuard } from "../../common/guards/clerk-auth.guard";
+import { SessionAuthGuard } from "../../common/guards/session-auth.guard";
 import { RolesGuard } from "../../common/guards/roles.guard";
 import { Roles } from "../../common/decorators/roles.decorator";
 import { CurrentUser, AuthenticatedUser } from "../../common/decorators/current-user.decorator";
@@ -8,7 +8,7 @@ import { InventoryLocationService } from "./inventory-location.service";
 import { InventoryMovementService, RecordMovementInput } from "./inventory-movement.service";
 
 @Controller("inventory-locations")
-@UseGuards(ClerkAuthGuard, RolesGuard)
+@UseGuards(SessionAuthGuard, RolesGuard)
 export class InventoryLocationController {
   constructor(private service: InventoryLocationService) {}
 
@@ -29,7 +29,7 @@ export class InventoryLocationController {
 }
 
 @Controller("inventory-movements")
-@UseGuards(ClerkAuthGuard, RolesGuard)
+@UseGuards(SessionAuthGuard, RolesGuard)
 export class InventoryMovementController {
   constructor(private service: InventoryMovementService) {}
 

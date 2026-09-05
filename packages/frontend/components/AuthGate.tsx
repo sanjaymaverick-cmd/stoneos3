@@ -2,15 +2,16 @@
 
 import { useEffect } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { useAuth } from "@clerk/nextjs";
-
-const PUBLIC_PATHS = ["/sign-in", "/sign-up"];
+import { useAuth } from "../lib/session";
+import { isPublicPath } from "../lib/routePolicy";
 
 export function AuthGate({ children }: { children: React.ReactNode }) {
   const { isLoaded, isSignedIn } = useAuth();
   const pathname = usePathname();
   const router = useRouter();
-  const isPublic = PUBLIC_PATHS.some((p) => pathname.startsWith(p));
+  // Shares one definition of "pre-auth route" with RouteAccessGuard and the
+  // nav, so a page can never be public to one and private to another.
+  const isPublic = isPublicPath(pathname);
 
   useEffect(() => {
     if (isLoaded && !isSignedIn && !isPublic) router.replace("/sign-in");

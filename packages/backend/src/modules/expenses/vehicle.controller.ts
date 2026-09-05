@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Post, UseGuards } from "@nestjs/common";
-import { ClerkAuthGuard } from "../../common/guards/clerk-auth.guard";
+import { SessionAuthGuard } from "../../common/guards/session-auth.guard";
 import { RolesGuard } from "../../common/guards/roles.guard";
 import { Roles } from "../../common/decorators/roles.decorator";
 import { CurrentUser, AuthenticatedUser } from "../../common/decorators/current-user.decorator";
@@ -7,7 +7,7 @@ import { EXPENSE_DATA_ROLES } from "../../common/role-policy";
 import { VehicleService } from "./vehicle.service";
 
 @Controller("vehicles")
-@UseGuards(ClerkAuthGuard, RolesGuard)
+@UseGuards(SessionAuthGuard, RolesGuard)
 export class VehicleController {
   constructor(private service: VehicleService) {}
 

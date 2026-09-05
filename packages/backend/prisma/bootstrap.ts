@@ -1,37 +1,37 @@
 // ONE-TIME BOOTSTRAP — run this before anything else works.
 //
-// Solves the real chicken-and-egg problem: the guarded /admin/users
-// endpoint requires an existing owner/admin to call it, but there is no
-// admin on day one. This script goes around the API directly (Prisma +
-// Clerk SDK) to create:
+// Solves the real chicken-and-egg problem: the guarded /admin/users endpoint
+// requires an existing owner/admin to call it, but there is no admin on day
+// one. This script goes around the API directly (Prisma) to create:
 //   1. The Factory row (Vedam Granites)
 //   2. B-21 and LPM machines with their real specs
-//   3. The first owner — looked up by email in Clerk, same as the
-//      ongoing /admin/users flow, just without the guard
+//   3. The first owner — username, password and all
+//
+// Since the move off Clerk there is no sign-up flow, so this is the ONLY way
+// the first credential comes into existence. Everyone else is issued a login
+// by the owner through POST /admin/users.
 //
 // Usage:
-//   OWNER_EMAIL=you@example.com npx ts-node prisma/bootstrap.ts
+//   OWNER_USERNAME=sanjay npx ts-node prisma/bootstrap.ts
 //
-// The person running this must have ALREADY signed up in the app via
-// Clerk (sign-up itself is unrestricted) — this script only grants that
-// existing account owner-level access to a factory it also creates.
+// Optional: OWNER_PASSWORD (one is generated and printed if you omit it),
+// OWNER_NAME, OWNER_EMAIL, FACTORY_NAME.
 import { PrismaClient } from "@prisma/client";
-import { clerkClient } from "../src/common/clerk-client";
+import { generatePassword, hashPassword } from "../src/common/password";
 
 const prisma = new PrismaClient();
 
 async function main() {
-  const ownerEmail = process.env.OWNER_EMAIL;
+  const username = (process.env.OWNER_USERNAME ?? "").trim().toLowerCase();
   const factoryName = process.env.FACTORY_NAME ?? "Vedam Granites";
-  if (!ownerEmail) {
-    throw new Error("Set OWNER_EMAIL to the email you signed up with in Clerk");
+  if (!username) {
+    throw new Error("Set OWNER_USERNAME to the login you want for the first owner");
   }
 
-  const { data: users } = await clerkClient.users.getUserList({ emailAddress: [ownerEmail] });
-  if (users.length === 0) {
-    throw new Error(`No Clerk account found for ${ownerEmail} — sign up in the app first, then re-run this.`);
-  }
-  const clerkUser = users[0];
+  // A password supplied by hand is used as-is; otherwise one is generated and
+  // printed. Either way it is hashed before it touches the database.
+  const generated = !process.env.OWNER_PASSWORD;
+  const password = process.env.OWNER_PASSWORD || generatePassword(14);
 
   // Reuse an existing factory of this name rather than creating a duplicate —
   // e.g. a factory row already created ahead of bootstrap (opening-balance/
@@ -58,13 +58,36 @@ async function main() {
     console.log(`Machines already exist for this factory (${existingMachines.map((m) => m.name).join(", ")}) — skipped seeding.`);
   }
 
-  await clerkClient.users.updateUserMetadata(clerkUser.id, {
-    publicMetadata: { factoryId: factory.id, role: "owner" },
-  });
+  const existingOwner = await prisma.appUser.findUnique({ where: { username } });
+  if (existingOwner) {
+    // Re-running must not silently reset the owner's password. Say so and stop.
+    console.log(`User "${username}" already exists — leaving their credentials alone.`);
+    console.log(`If you need a new password, use the owner's own reset, or delete the row and re-run.`);
+    return;
+  }
+
   await prisma.appUser.create({
-    data: { factoryId: factory.id, email: ownerEmail, name: clerkUser.firstName ?? ownerEmail, role: "owner" },
+    data: {
+      factoryId: factory.id,
+      username,
+      name: process.env.OWNER_NAME?.trim() || username,
+      email: process.env.OWNER_EMAIL || null,
+      role: "owner",
+      passwordHash: await hashPassword(password),
+    },
   });
-  console.log(`Granted ${ownerEmail} owner access to ${factory.name}`);
+
+  console.log(`Granted "${username}" owner access to ${factory.name}`);
+  console.log();
+  if (generated) {
+    console.log(`  username: ${username}`);
+    console.log(`  password: ${password}`);
+    console.log();
+    console.log("This password is shown ONCE and is not recoverable — only its hash is stored.");
+    console.log("Sign in, then change it from the app.");
+  } else {
+    console.log(`  username: ${username}  (password: the OWNER_PASSWORD you supplied)`);
+  }
   console.log();
   console.log(`FACTORY_ID=${factory.id}  (save this — you won't need it day-to-day, but it's handy for scripts)`);
 }

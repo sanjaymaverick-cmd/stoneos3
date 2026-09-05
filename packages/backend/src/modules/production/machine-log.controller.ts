@@ -1,5 +1,5 @@
 import { Body, Controller, Param, Post, UseGuards } from "@nestjs/common";
-import { ClerkAuthGuard } from "../../common/guards/clerk-auth.guard";
+import { SessionAuthGuard } from "../../common/guards/session-auth.guard";
 import { RolesGuard } from "../../common/guards/roles.guard";
 import { Roles } from "../../common/decorators/roles.decorator";
 import { CurrentUser, AuthenticatedUser } from "../../common/decorators/current-user.decorator";
@@ -7,7 +7,7 @@ import { PRODUCTION_INPUT_ROLES } from "../../common/role-policy";
 import { MachineLogService } from "./machine-log.service";
 
 @Controller("machines/:machineId/log")
-@UseGuards(ClerkAuthGuard, RolesGuard)
+@UseGuards(SessionAuthGuard, RolesGuard)
 export class MachineLogController {
   constructor(private service: MachineLogService) {}
 

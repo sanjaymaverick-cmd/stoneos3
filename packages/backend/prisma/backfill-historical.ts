@@ -647,7 +647,7 @@ async function main() {
   const factory = await prisma.factory.findFirst();
   if (!factory) {
     if (CONFIRM) throw new Error("No Factory row found — run prisma/bootstrap.ts first.");
-    console.log("No Factory row found in local Postgres yet (prisma/bootstrap.ts hasn't been run in this environment — it requires a live Clerk-authenticated owner and is out of scope for this dry run).");
+    console.log("No Factory row found in local Postgres yet (prisma/bootstrap.ts hasn't been run in this environment — it needs an owner username/password and is out of scope for this dry run).");
     console.log("Vehicle lookup/creation and factory-scoped checks are skipped below; everything above (parsing + reconciliation) does not depend on a Factory row.");
     console.log("\n=== DRY RUN COMPLETE (factory-independent checks only) — no rows were written. ===");
     return;

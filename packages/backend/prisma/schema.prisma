@@ -3,8 +3,18 @@
 // enough in the model to let Prisma own migrations outright.
 
 generator client {
-  provider      = "prisma-client-js"
-  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+  provider = "prisma-client-js"
+  // "native" covers whatever machine runs `prisma generate` (a developer's
+  // Windows or macOS box, and the CI runner).
+  //
+  // The two musl targets are for the Alpine production images. BOTH
+  // architectures are listed on purpose: x86_64 for ordinary cloud VMs and CI,
+  // arm64 for Oracle Cloud's Ampere A1 instances, which are aarch64 and are
+  // what the Always Free tier gives you. Prisma resolves the engine at RUNTIME
+  // from the platform it finds itself on, so an image built for arm64 without
+  // the arm64 target compiles and pushes cleanly and then dies on first query
+  // with "Query engine binary for current platform could not be found".
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x", "linux-musl-arm64-openssl-3.0.x"]
 }
 
 datasource db {
@@ -145,9 +155,21 @@ model AppUser {
   factoryId String   @map("factory_id")
   factory   Factory  @relation(fields: [factoryId], references: [id])
   name      String
-  email     String   @unique
+  // Login identifier. Owner-assigned (e.g. "ramesh.k") — factory staff do
+  // not necessarily have a work email address, so username is the credential
+  // and email is optional contact detail.
+  username  String   @unique
+  email     String?  @unique
+  // scrypt hash, format "scrypt$N$r$p$<salt-b64>$<hash-b64>" — see
+  // src/common/password.ts. Never leaves the server.
+  passwordHash String @map("password_hash")
   role      UserRole
   active    Boolean  @default(true)
+  // Bumped on every revoke and password change. Session tokens carry the
+  // version they were minted with; SessionAuthGuard rejects any token whose
+  // version is stale, so revoking access kills live sessions on the next
+  // request rather than whenever the token happens to expire.
+  tokenVersion Int    @default(0) @map("token_version")
   createdAt DateTime @default(now()) @map("created_at")
 
   @@map("app_user")

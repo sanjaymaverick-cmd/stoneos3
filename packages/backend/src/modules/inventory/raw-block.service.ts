@@ -231,7 +231,7 @@ export class RawBlockService {
           fromState: null,
           toState: currentStatus,
           userId: user.id,
-          notes: entrySource === "purchase" ? undefined : `${entrySource} entry recorded by ${user.email}`,
+          notes: entrySource === "purchase" ? undefined : `${entrySource} entry recorded by ${user.username}`,
         },
       });
 

@@ -3,7 +3,8 @@
 # StoneOS — Vedam Granites Pilot
 
 Modular monolith. NestJS backend + Next.js frontend, PostgreSQL via Prisma,
-Clerk for auth. **Runs locally only** — there is no hosted environment.
+owner-issued local credentials for auth. **Runs locally only** — there is no
+hosted environment.
 
 > No production deployment exists. The AWS infrastructure this project
 > previously ran on has been torn down and its config removed from the repo.
@@ -35,11 +36,20 @@ npm run dev:backend           # http://localhost:4000
 npm run dev:frontend          # http://localhost:3000
 ```
 
-You'll need a Clerk account (clerk.com) for `CLERK_SECRET_KEY` and
-`NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` — free tier is enough for development.
-The app uses **Clerk Core 3** (`@clerk/nextjs` v7 on the frontend,
-`@clerk/backend` v3 on the backend). Sign-in/sign-up live at `/sign-in`
-and `/sign-up`; a client-side `AuthGate` redirects unauthenticated users.
+Auth is self-hosted — there is no third-party identity provider. Set
+`SESSION_SECRET` (at least 32 characters, see `.env.example`) and that is all.
+
+**There is no sign-up.** An account exists only because an owner created it:
+`prisma/bootstrap.ts` mints the first owner, and everyone after that is issued
+a username and a generated password through `POST /admin/users` (the
+`/admin/users` page). Sign-in lives at `/sign-in`; a client-side `AuthGate`
+redirects unauthenticated users there.
+
+Passwords are scrypt hashes (`src/common/password.ts` — standard library, no
+native dependency to break in the Alpine image); sessions are HS256 JWTs
+(`src/common/session-token.ts`). Revoking a user sets `active=false` AND bumps
+`tokenVersion`, and `SessionAuthGuard` re-checks both on every request — so
+access ends on their next tap rather than whenever the token would expire.
 
 ## Deployment
 
@@ -66,7 +76,7 @@ environment (host, database, secrets, TLS, CI/CD) is unscoped work.
 | Sales (orders, line items, daily summary) | Built — order+lineitems created atomically; linked slabs auto-transition to 'sold'; daily summary recomputes from real line items on every order, with a separate backfill-only endpoint for historical cash-book totals |
 | Expenses (incl. vehicles, cost allocation) | Built — category validated against the real Vedam Granites list; vehicleId required when category='vehicle'; allocation endpoint rejects over-allocation past the expense total |
 | Tally import | Built — daybook/trial-balance ledger import plus item-level stock detail (`TallyVoucherItem`) with a `GET /tally-import/item-cross-check` sqft cross-check against `sales_line_item`. Real-data verification against an actual Tally export is OUT OF SCOPE for now (Owner's call) — no sample export exists in this repo, and running that verification isn't being pursued at the moment |
-| Auth + user provisioning | Built — TWO paths: (1) `prisma/bootstrap.ts` for the very-first-ever setup — creates the Factory, seeds B-21/LPM, and grants the first owner (solves the chicken-and-egg problem: no admin exists yet to use the guarded endpoint). (2) `POST /admin/users` (owner/admin only, via new `RolesGuard`) for ongoing provisioning after that — looks up a teammate's Clerk account by email and grants them a role, always scoped to the caller's own factory |
+| Auth + user provisioning | Built — TWO paths: (1) `prisma/bootstrap.ts` for the very-first-ever setup — creates the Factory, seeds B-21/LPM, and grants the first owner (solves the chicken-and-egg problem: no admin exists yet to use the guarded endpoint). (2) `POST /admin/users` (owner/admin only, via `RolesGuard`) for ongoing provisioning after that — creates the login, generates a one-time password for the owner to hand over, and grants a role, always scoped to the caller's own factory. Revoke/reinstate/reset-password live alongside it |
 | Frontend DPR page | Built — `/dpr` ("Production — B-21"): block allocation, per-day cutting logs, and session completion with per-slab dimension overrides, using real API data throughout |
 | Frontend Admin/Team page | Built — `/admin/users`: grant access by email + role, team list. Hidden from non-admins client-side; enforced server-side regardless |
 | Frontend Sales page | Built — `/sales`: new order form with dynamic line items, customer picker with quick-add, recent orders list |
@@ -81,7 +91,7 @@ Any database, local or hosted, in this order:
 ```bash
 npx prisma migrate deploy --schema packages/backend/prisma/schema.prisma
 COPILOT_DB_PASSWORD='<generated secret>' npm run db:provision-roles
-OWNER_EMAIL=you@example.com npx ts-node packages/backend/prisma/bootstrap.ts
+OWNER_USERNAME=you npx ts-node packages/backend/prisma/bootstrap.ts
 ```
 
 Migrations create the Copilot's read-only role **without a password and
@@ -110,8 +120,8 @@ needs superuser and is not available on RDS, Neon or Supabase.
 ## Multi-tenant enforcement
 
 Every table carries `factory_id`. The enforcement point is
-`ClerkAuthGuard` + `@CurrentUser()`: every controller pulls `factoryId`
-from the authenticated user's Clerk metadata and every service method
+`SessionAuthGuard` + `@CurrentUser()`: every controller pulls `factoryId`
+from the authenticated user's own row and every service method
 filters on it. There is no global "list everything" query anywhere in
 the codebase — if you add one, you've broken tenant isolation.
 
@@ -123,7 +133,7 @@ the codebase — if you add one, you've broken tenant isolation.
    now safe to re-run against a factory that already has backfilled data linked to it), seeded
    B-21/LPM, granted `sanjay.maverick@gmail.com` owner access. Use `prisma/seed-machines.ts`
    later only if you add a second factory.
-2. ~~User provisioning flow~~ — DONE, backend AND frontend. `/admin/users` page: grant-access form + team list, gated client-side via Clerk's `publicMetadata.role` (owner/admin only — real enforcement is still server-side via RolesGuard, the client check is just UX). "Team" link in nav only appears for owner/admin.
+2. ~~User provisioning flow~~ — DONE, backend AND frontend. `/admin/users` page: grant-access form + team list, gated client-side via the session's `role` (owner/admin only — real enforcement is still server-side via RolesGuard, the client check is just UX). "Team" link in nav only appears for owner/admin.
 3. ~~Cost allocation for damaged slabs~~ — DONE. `GET /raw-blocks/:id` returns a computed `damagedSlabLoss` object valuing damaged slabs at raw block purchase price (never finished slab price — see schema notes). Scoped to the detail endpoint only, not the list endpoint.
 4. ~~Recovery ratio report~~ — DONE. `GET /raw-blocks/recovery-ratio` computes sale-time sqft sold per ton of rough block against the 105 sqft/ton benchmark; live page at `/recovery-ratio`.
 5. ~~Per-slab dimension overrides~~ — DONE. `CuttingSession.complete()` accepts an opt-in `slabOverrides` array for the rare mixed-size batch; the default uniform-size path is unchanged.

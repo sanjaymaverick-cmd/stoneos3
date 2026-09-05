@@ -1,17 +1,15 @@
-import { ClerkOfflineError } from "@clerk/nextjs/errors";
-
 const apiUrl = process.env.NEXT_PUBLIC_API_URL;
 
-// getToken() throws ClerkOfflineError instead of returning null when the
-// client is offline (Clerk Core 3). Callers here already treat a null
-// token as "skip this load" (e.g. signed out), so offline collapses into
-// the same no-op rather than an unhandled rejection.
+// Kept as the single place every page reaches for its token, so call sites did
+// not have to change when the app moved off Clerk. Clerk's getToken() could
+// throw (ClerkOfflineError) instead of returning null; ours cannot, so this is
+// now just a null-safe pass-through. Callers already treat a null token as
+// "skip this load".
 export async function safeGetToken(getToken: () => Promise<string | null>) {
   try {
     return await getToken();
-  } catch (e) {
-    if (ClerkOfflineError.is(e)) return null;
-    throw e;
+  } catch {
+    return null;
   }
 }
 

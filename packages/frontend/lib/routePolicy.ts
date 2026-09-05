@@ -41,7 +41,7 @@ const POLICIES: Array<{ prefix: string; roles: string[] }> = [
 
 // Pre-auth routes. AuthGate owns these; the role guard must not intercept them
 // or a signed-out user could never reach the sign-in form.
-export const PUBLIC_PATHS = ["/sign-in", "/sign-up"];
+export const PUBLIC_PATHS = ["/sign-in"];
 
 export function isPublicPath(pathname: string) {
   return PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`));

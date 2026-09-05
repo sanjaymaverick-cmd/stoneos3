@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Param, Post, UseGuards } from "@nestjs/common";
-import { ClerkAuthGuard } from "../../common/guards/clerk-auth.guard";
+import { SessionAuthGuard } from "../../common/guards/session-auth.guard";
 import { RolesGuard } from "../../common/guards/roles.guard";
 import { Roles } from "../../common/decorators/roles.decorator";
 import { CurrentUser, AuthenticatedUser } from "../../common/decorators/current-user.decorator";
@@ -8,7 +8,7 @@ import { SalesOrderService } from "./sales-order.service";
 import { DailySalesSummaryService } from "./daily-sales-summary.service";
 
 @Controller("sales-orders")
-@UseGuards(ClerkAuthGuard, RolesGuard)
+@UseGuards(SessionAuthGuard, RolesGuard)
 export class SalesOrderController {
   constructor(
     private service: SalesOrderService,

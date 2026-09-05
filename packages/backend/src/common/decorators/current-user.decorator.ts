@@ -2,7 +2,10 @@ import { createParamDecorator, ExecutionContext } from "@nestjs/common";
 
 export interface AuthenticatedUser {
   id: string;
-  email: string;
+  // The login identifier the owner assigned. Always present — unlike email,
+  // which is optional contact detail since the move off Clerk.
+  username: string;
+  email: string | null;
   factoryId: string;
   role: string;
 }

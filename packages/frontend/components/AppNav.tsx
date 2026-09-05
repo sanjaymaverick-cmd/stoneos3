@@ -1,13 +1,14 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useUser, UserButton } from "@clerk/nextjs";
+import { useUser } from "../lib/session";
+import { UserButton } from "./UserButton";
 import { navLinksFor } from "../lib/routePolicy";
 
 export function AppNav() {
   const pathname = usePathname();
   const { user } = useUser();
-  const role = user?.publicMetadata?.role as string | undefined;
+  const role = user?.role;
   // Single source of truth with RouteAccessGuard and the backend RolesGuard —
   // a link is only rendered if the same policy would let the role open it.
   const links = navLinksFor(role);

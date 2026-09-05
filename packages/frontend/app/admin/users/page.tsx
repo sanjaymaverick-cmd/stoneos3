@@ -1,8 +1,8 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useAuth, useUser } from "@clerk/nextjs";
-import { Users, UserPlus, Save, Check } from "lucide-react";
+import { useAuth, useUser } from "../../../lib/session";
+import { Users, UserPlus, Save, Check, KeyRound, Ban, RotateCcw } from "lucide-react";
 import { apiFetch, safeGetToken } from "../../../lib/api";
 import { AppNav } from "../../../components/AppNav";
 import { Ticket } from "../../../components/Ticket";
@@ -10,26 +10,40 @@ import { Ticket } from "../../../components/Ticket";
 // Matches app_user.role check constraint in the schema — keep in sync.
 const ROLES = ["owner", "manager", "supervisor", "operator", "accountant", "auditor", "admin"];
 
+interface TeamMember {
+  id: string;
+  username: string;
+  name: string;
+  email: string | null;
+  role: string;
+  active: boolean;
+}
+
 export default function AdminUsersPage() {
   const { getToken } = useAuth();
   const { user } = useUser();
-  const myRole = user?.publicMetadata?.role as string | undefined;
+  const myRole = user?.role;
   const canAdminister = myRole === "owner" || myRole === "admin";
 
-  const [users, setUsers] = useState<any[]>([]);
-  const [email, setEmail] = useState("");
+  const [users, setUsers] = useState<TeamMember[]>([]);
+  const [username, setUsername] = useState("");
+  const [name, setName] = useState("");
   const [role, setRole] = useState("supervisor");
   const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState("");
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState("");
 
+  // The one-time password from the last issue/reset. Held only in component
+  // state — it is never fetched again, because the server keeps only its hash.
+  const [issued, setIssued] = useState<{ username: string; password: string } | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+
   const loadUsers = async () => {
     const token = await safeGetToken(getToken);
     if (!token) return;
     try {
-      const list = await apiFetch("/admin/users", token);
-      setUsers(list);
+      setUsers(await apiFetch("/admin/users", token));
       setLoadError("");
     } catch (e: any) {
       // A non-admin hitting this is expected (403) — the page already
@@ -41,34 +55,55 @@ export default function AdminUsersPage() {
     setLoaded(true);
   };
 
-  useEffect(() => { if (canAdminister) loadUsers(); else setLoaded(true); }, [canAdminister]);
+  useEffect(() => {
+    if (canAdminister) loadUsers();
+    else setLoaded(true);
+  }, [canAdminister]);
 
   const provision = async () => {
-    if (!email.trim()) {
-      setErrorMsg("Enter the teammate's email — they need to have signed up already");
+    if (!username.trim()) {
+      setErrorMsg("Choose a username for them — this is what they will sign in with");
       setStatus("error");
       return;
     }
-    setStatus("saving"); setErrorMsg("");
+    setStatus("saving");
+    setErrorMsg("");
     try {
       const token = await safeGetToken(getToken);
       if (!token) throw new Error("not authenticated");
-      await apiFetch("/admin/users", token, {
+      const result = await apiFetch("/admin/users", token, {
         method: "POST",
-        body: JSON.stringify({ email: email.trim(), role }),
+        body: JSON.stringify({ username: username.trim().toLowerCase(), name: name.trim() || undefined, role }),
       });
-      setEmail("");
+      // Only a newly created account comes back with a password; a role
+      // change on an existing one deliberately leaves credentials alone.
+      if (result.password) setIssued({ username: result.user.username, password: result.password });
+      setUsername("");
+      setName("");
       await loadUsers();
       setStatus("saved");
       setTimeout(() => setStatus("idle"), 1800);
     } catch (e: any) {
-      setErrorMsg(
-        e.message?.includes("404")
-          ? "No account found for that email — they need to sign up in the app first, then try again."
-          : e.message ?? "Failed to provision",
-      );
+      setErrorMsg(e.message ?? "Failed to issue access");
       setStatus("error");
     }
+  };
+
+  // revoke / reinstate / reset-password all follow the same shape.
+  const act = async (id: string, action: "revoke" | "reinstate" | "reset-password", confirmText?: string) => {
+    if (confirmText && !window.confirm(confirmText)) return;
+    setBusyId(id);
+    setErrorMsg("");
+    try {
+      const token = await safeGetToken(getToken);
+      if (!token) throw new Error("not authenticated");
+      const result = await apiFetch(`/admin/users/${id}/${action}`, token, { method: "POST" });
+      if (result.password) setIssued({ username: result.user.username, password: result.password });
+      await loadUsers();
+    } catch (e: any) {
+      setErrorMsg(e.message ?? `Failed to ${action}`);
+    }
+    setBusyId(null);
   };
 
   if (!loaded) {
@@ -108,11 +143,61 @@ export default function AdminUsersPage() {
         <AppNav />
       </div>
 
-      <Ticket icon={UserPlus} title="Grant Access" subtitle="They must sign up in the app first — this step turns that account into real access" accent="moss">
+      {issued && (
+        <Ticket icon={KeyRound} title="Password issued" subtitle="Shown once — copy it now" accent="rust">
+          <p style={{ marginTop: 0, fontSize: 13 }}>
+            Give these to <strong>{issued.username}</strong>. This password is not stored anywhere you can read it
+            again — if it is lost, issue a reset.
+          </p>
+          <div
+            style={{
+              fontFamily: "IBM Plex Mono, monospace",
+              fontSize: 16,
+              padding: "12px 14px",
+              background: "var(--paper-shade, #F1EDE4)",
+              borderRadius: 6,
+              userSelect: "all",
+              wordBreak: "break-all",
+            }}
+          >
+            {issued.username} / {issued.password}
+          </div>
+          <div style={{ marginTop: 12, display: "flex", gap: 10, justifyContent: "flex-end" }}>
+            <button
+              className="primary-btn"
+              onClick={() => navigator.clipboard?.writeText(`${issued.username} / ${issued.password}`)}
+            >
+              Copy
+            </button>
+            <button className="ghost-btn" onClick={() => setIssued(null)}>
+              Done
+            </button>
+          </div>
+        </Ticket>
+      )}
+
+      <Ticket
+        icon={UserPlus}
+        title="Issue Access"
+        subtitle="Creates the login and generates their password — there is no sign-up"
+        accent="moss"
+      >
         <div className="grid">
-          <label className="field" style={{ gridColumn: "span 2" }}>
-            <span className="field-label">Teammate's Email</span>
-            <input className="field-input" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="name@example.com" />
+          <label className="field">
+            <span className="field-label">Username</span>
+            <input
+              className="field-input"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              placeholder="ramesh.k"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+            />
+          </label>
+          <label className="field">
+            <span className="field-label">Full Name</span>
+            <input className="field-input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Ramesh Kumar" />
           </label>
           <label className="field">
             <span className="field-label">Role</span>
@@ -125,29 +210,69 @@ export default function AdminUsersPage() {
         <div style={{ marginTop: 14, display: "flex", justifyContent: "flex-end" }}>
           <button className={`primary-btn ${status === "saved" ? "saved" : ""}`} onClick={provision} disabled={status === "saving"}>
             {status === "saved" ? <Check size={15} /> : <Save size={15} />}
-            {status === "saving" ? "Granting…" : status === "saved" ? "Granted" : "Grant Access"}
+            {status === "saving" ? "Issuing…" : status === "saved" ? "Issued" : "Issue Access"}
           </button>
         </div>
       </Ticket>
 
       <Ticket icon={Users} title={`Team (${users.length})`}>
         {loadError ? (
-          <p style={{ color: "var(--rust)", fontSize: 13 }}>Couldn't load the team list: {loadError}</p>
+          <p style={{ color: "var(--rust)", fontSize: 13 }}>Couldn&apos;t load the team list: {loadError}</p>
         ) : users.length === 0 ? (
-          <p className="empty-note">No teammates provisioned yet.</p>
+          <p className="empty-note">Nobody has been issued access yet.</p>
         ) : (
           <div className="table-scroll">
             <table className="list-table">
-              <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th></tr></thead>
+              <thead>
+                <tr><th>Username</th><th>Name</th><th>Role</th><th>Status</th><th>Actions</th></tr>
+              </thead>
               <tbody>
-                {users.map((u) => (
-                  <tr key={u.id}>
-                    <td style={{ fontFamily: "Space Grotesk" }}>{u.name}</td>
-                    <td style={{ fontFamily: "Space Grotesk" }}>{u.email}</td>
-                    <td><span className="badge invoiced">{u.role}</span></td>
-                    <td>{u.active ? "Active" : "Inactive"}</td>
-                  </tr>
-                ))}
+                {users.map((u) => {
+                  const isMe = u.id === user?.id;
+                  return (
+                    <tr key={u.id} style={u.active ? undefined : { opacity: 0.55 }}>
+                      <td style={{ fontFamily: "IBM Plex Mono, monospace" }}>{u.username}</td>
+                      <td style={{ fontFamily: "Space Grotesk" }}>{u.name}</td>
+                      <td><span className="badge invoiced">{u.role}</span></td>
+                      <td>{u.active ? "Active" : "Revoked"}</td>
+                      <td style={{ whiteSpace: "nowrap" }}>
+                        {/* Self-revocation is refused by the backend too — hiding
+                            it here just avoids offering a button that cannot work. */}
+                        {u.active ? (
+                          <button
+                            className="ghost-btn"
+                            disabled={isMe || busyId === u.id}
+                            title={isMe ? "You cannot revoke your own access" : "Revoke access immediately"}
+                            onClick={() =>
+                              act(u.id, "revoke", `Revoke access for ${u.username}? They are signed out immediately.`)
+                            }
+                          >
+                            <Ban size={13} /> Revoke
+                          </button>
+                        ) : (
+                          <button
+                            className="ghost-btn"
+                            disabled={busyId === u.id}
+                            title="Restore access with a new password"
+                            onClick={() => act(u.id, "reinstate")}
+                          >
+                            <RotateCcw size={13} /> Reinstate
+                          </button>
+                        )}
+                        <button
+                          className="ghost-btn"
+                          disabled={busyId === u.id}
+                          title="Issue a new password"
+                          onClick={() =>
+                            act(u.id, "reset-password", `Reset the password for ${u.username}? Their current one stops working.`)
+                          }
+                        >
+                          <KeyRound size={13} /> Reset
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

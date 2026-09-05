@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useAuth } from "@clerk/nextjs";
+import { useAuth } from "../../lib/session";
 import { Gauge } from "lucide-react";
 import { apiFetch, safeGetToken } from "../../lib/api";
 import { AppNav } from "../../components/AppNav";

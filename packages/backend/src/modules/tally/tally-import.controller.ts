@@ -1,6 +1,6 @@
 import { Controller, Get, Post, Query, UploadedFile, UseGuards, UseInterceptors, BadRequestException } from "@nestjs/common";
 import { FileInterceptor } from "@nestjs/platform-express";
-import { ClerkAuthGuard } from "../../common/guards/clerk-auth.guard";
+import { SessionAuthGuard } from "../../common/guards/session-auth.guard";
 import { RolesGuard } from "../../common/guards/roles.guard";
 import { Roles } from "../../common/decorators/roles.decorator";
 import { CurrentUser, AuthenticatedUser } from "../../common/decorators/current-user.decorator";
@@ -10,7 +10,7 @@ import { TallyImportService } from "./tally-import.service";
 // Tally imports write accounting history into the factory's ledger, so every
 // mutating endpoint here is restricted to the elevated tier.
 @Controller("tally-import")
-@UseGuards(ClerkAuthGuard, RolesGuard)
+@UseGuards(SessionAuthGuard, RolesGuard)
 export class TallyImportController {
   constructor(private service: TallyImportService) {}
 
