@@ -1,5 +1,6 @@
-import { Injectable, BadRequestException } from "@nestjs/common";
+import { Injectable, BadRequestException, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../../common/prisma.service";
+import { pickFields } from "../../common/pick-fields";
 
 // OPERATIONAL DAY = 7am to 7am. Work done at 2am on Jan 6 belongs to
 // operational date Jan 5 (the 7am report that covers it). This helper is
@@ -101,10 +102,36 @@ export class CuttingSessionService {
     });
   }
 
+  // Runtime counterpart to DayLogInput. cuttingSessionId is absent on purpose:
+  // a QA run posted a day-log to session A's URL with session B's id in the
+  // body, and it landed on B.
+  private static readonly DAY_LOG_WRITABLE = [
+    "runtimeHours",
+    "powerCutMinutes",
+    "downtimeMinutes",
+    "downtimeReason",
+    "powerConsumptionKwh",
+    "slabsProducedCount",
+    "notes",
+  ] as const;
+
   // One row per operational day per session. Upsert so the 7am entry can
   // be corrected during the day without duplicating.
-  upsertDayLog(sessionId: string, userId: string, input: DayLogInput) {
-    const { operationalDate, ...fields } = input;
+  //
+  // factoryId is required and checked. Until this took it, the method never
+  // received one at all — the only endpoint in the app with no tenant check
+  // whatsoever. An unknown session id reached Postgres and surfaced as a raw
+  // 500 foreign-key violation rather than a 404, which is how the gap was
+  // spotted: the sibling complete() looks its session up, this did not.
+  async upsertDayLog(factoryId: string, sessionId: string, userId: string, input: DayLogInput) {
+    const session = await this.prisma.cuttingSession.findFirst({
+      where: { id: sessionId, factoryId },
+      select: { id: true },
+    });
+    if (!session) throw new NotFoundException("Cutting session not found");
+
+    const { operationalDate } = input;
+    const fields = pickFields<DayLogInput>(input, CuttingSessionService.DAY_LOG_WRITABLE);
     return this.prisma.cuttingDayLog.upsert({
       where: {
         cuttingSessionId_operationalDate: {

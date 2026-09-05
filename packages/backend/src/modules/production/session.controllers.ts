@@ -33,7 +33,7 @@ export class CuttingSessionController {
   @Post(":id/day-log")
   @Roles(...PRODUCTION_INPUT_ROLES)
   dayLog(@CurrentUser() user: AuthenticatedUser, @Param("id") id: string, @Body() body: any) {
-    return this.service.upsertDayLog(id, user.id, body);
+    return this.service.upsertDayLog(user.factoryId, id, user.id, body);
   }
 
   @Post(":id/complete")

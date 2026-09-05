@@ -1,5 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../../common/prisma.service";
+import { pickFields } from "../../common/pick-fields";
 
 interface CreateSlabInput {
   parentBlockId: string;
@@ -26,9 +27,27 @@ export class SlabService {
     });
   }
 
+  // Runtime counterpart to CreateSlabInput above. A QA run showed a supervisor
+  // creating slabs straight into `salesStatus: "sold"` with no transitions —
+  // the sales flow and its audit trail simply skipped. salesStatus is
+  // deliberately absent here: a new slab is always in_stock, and every move
+  // out of that state goes through transition() so a trail exists.
+  private static readonly OPTIONAL_WRITABLE = ["thicknessMm", "lengthFt", "widthFt", "finish"] as const;
+
   create(factoryId: string, input: CreateSlabInput) {
+    // The three required fields are named explicitly so the compiler still
+    // checks them; only the optional ones come through the allowlist. Nothing
+    // the caller sends beyond these seven keys reaches the INSERT.
+    const { parentBlockId, slabSerial, varietyName } = input;
     return this.prisma.slab.create({
-      data: { factoryId, salesStatus: "in_stock", ...input },
+      data: {
+        factoryId,
+        salesStatus: "in_stock",
+        parentBlockId,
+        slabSerial,
+        varietyName,
+        ...pickFields<CreateSlabInput>(input, SlabService.OPTIONAL_WRITABLE),
+      },
     });
   }
 
