@@ -27,8 +27,9 @@ node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
 
 Use **Update & restart**, not Update only, or the running pod keeps the old values.
 
-**2. Run the migrations.** The database is empty, which is why `POST /auth/login`
-currently returns 500 — `app_user` does not exist yet. See Step 2 below.
+~~**2. Run the migrations.**~~ Done — all 11 migrations applied, the factory
+and machines are seeded, and the first owner exists. `POST /auth/login` now
+returns a clean 401 for bad credentials instead of a 500.
 
 **3. Add a backup schedule** on the `stoneos-db` addon.
 
@@ -131,47 +132,66 @@ The production backend image runs `npm install --omit=dev`, so it has **no
 Prisma CLI and no ts-node**. Migrations cannot run inside the deployed
 container.
 
-The addon is **private**, so it has no public hostname. Rather than exposing
-Postgres to the internet, port-forward it for the one-time bootstrap:
+The addon is **private networking only** — its hostname does not resolve
+outside the cluster, so there is no connecting to it from a laptop directly.
+
+`northflank forward addon` is the documented route, but **it requires an
+Administrator shell on Windows** and fails with a bare "not running as
+administrator" otherwise.
+
+What worked instead was running everything *inside the backend pod*, where
+`DATABASE_URL` is already injected and Postgres is a local hop away:
 
 ```bash
-npm i -g @northflank/cli && northflank login
+northflank exec service --projectId stoneos --serviceId stoneos-api \
+  --shell-cmd 'sh -c' \
+  --cmd 'cd /app && npm_config_cache=/tmp/.npm npx --yes prisma@5.22.0 migrate deploy --schema /app/prisma/schema.prisma'
 ```
+
+Two things to know if you repeat this:
+
+- Quote the command as `--cmd 'the whole thing'` with **no inner double
+  quotes**. The documented `--cmd '"..."'` form passes the quotes through to
+  `sh`, which then looks for a command literally named `ls /app/prisma`.
+- `npm_config_cache=/tmp/.npm` is required. The image runs as the
+  unprivileged `node` user and npx cannot write its default cache.
+
+### Creating the first owner
+
+`prisma/bootstrap.ts` **cannot run in the production image**: it is TypeScript
+and imports `../src/common/password`, but the image ships only `dist/`
+(`npm install --omit=dev`, so no ts-node either). The equivalent script that
+was used requires the *compiled* `/app/dist/common/password.js`, so the
+hashing is the same code the running app uses, and runs with
+`NODE_PATH=/app/node_modules` because a script in `/tmp` cannot otherwise
+resolve `@prisma/client`.
+
+If you need to add another owner later, the easier path is the app itself:
+sign in as an existing owner and use `/admin/users`.
+
+### Still outstanding: the Copilot database role
+
+`db:provision-roles` has NOT been run. It needs a `COPILOT_DB_PASSWORD` that
+must then match `COPILOT_DATABASE_URL` on the backend service. Only
+`POST /copilot/ask` is affected; everything else works without it.
 
 ```bash
-northflank forward addon --project stoneos --addon stoneos-db
+node -e "console.log(require('crypto').randomBytes(24).toString('base64url'))"
 ```
 
-That gives you a `localhost` port. With it open, in a second terminal:
+Then, with that value as `COPILOT_DB_PASSWORD`:
 
 ```bash
-export DATABASE_URL='postgresql://<user>:<pass>@localhost:<forwarded-port>/stoneos'
-npx prisma migrate deploy --schema packages/backend/prisma/schema.prisma
+northflank exec service --projectId stoneos --serviceId stoneos-api \
+  --shell-cmd 'sh -c' \
+  --cmd 'cd /app && COPILOT_DB_PASSWORD=<value> npm_config_cache=/tmp/.npm npx --yes ts-node prisma/provision-db-roles.ts'
 ```
 
-This is a brand-new empty database, so the whole migration history applies
-cleanly in order. The `migrate resolve` drift problem described in
-`handoff/REVIEW-FEEDBACK.md` only affects databases where migrations were
-partially applied — it does not apply here.
+and set `COPILOT_DATABASE_URL` on the service to the same admin host with user
+`stoneos_copilot_ro` and that password.
 
-Provision the Copilot's read-only role:
-
-```bash
-COPILOT_DB_PASSWORD='<the second generated secret>' npm run db:provision-roles
-```
-
-> **If this fails on permissions**, the addon's user lacks `CREATEROLE`. Only
-> `/copilot/ask` is affected; the rest of the app runs fine without it.
-
-Then create the first owner — this is the only account that is not issued by
-another user, and the password is printed once:
-
-```bash
-OWNER_USERNAME=sanjay npx ts-node packages/backend/prisma/bootstrap.ts
-```
-
-**Repeat `migrate deploy` this way after any future migration.** There is no
-automatic migration step in the deployed image.
+**After any future migration, re-run the `migrate deploy` command above.**
+There is no automatic migration step in the deployed image.
 
 ## Step 3 — Backend service
 
