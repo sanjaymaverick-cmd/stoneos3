@@ -15,8 +15,14 @@ import { NestFactory } from "@nestjs/core";
 import { AppModule } from "./app.module";
 import { rateLimit, securityHeaders } from "./common/http-security";
 import { parseFrontendOrigins } from "./common/cors";
+import { assertStartupConfig } from "./common/startup-checks";
 
 async function bootstrap() {
+  // BEFORE anything else starts. A bad SESSION_SECRET or missing DATABASE_URL
+  // is a deployment that should never serve traffic — catching it here turns
+  // a mystery 500 at login time into a named variable in the deploy logs.
+  assertStartupConfig();
+
   const app = await NestFactory.create(AppModule);
   // One proxy hop, so req.ip is the real client rather than the proxy — the
   // rate limiter buckets on it.
